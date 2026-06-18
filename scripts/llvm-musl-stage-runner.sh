@@ -178,6 +178,10 @@ RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_GWP_ASAN=OFF"
 RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_CTX_PROFILE=OFF"
 RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_XRAY_NO_PREINIT=OFF"
 RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_SCUDO_STANDALONE_WITH_LLVM_LIBC=OFF"
+# LLVM's runtimes sub-build inherits LLVM_USE_LINKER=lld from LLVM_ENABLE_LLD
+# and then probes -fuse-ld=lld. Use the validated stage1 linker path so the
+# probe does not depend on PATH or clang's linker-name lookup.
+RUNTIMES_CMAKE_ARGS+=";-DLLVM_USE_LINKER=${LLVM_BUILD_DIR}/bin/ld.lld"
 # Bootstrap: stage1 builds clang/lld with Alpine's clang, linked against
 # the host libstdc++ (not shipped).  Stage2 statically links libstdc++
 # and libgcc so they do not appear in NEEDED.  The shipped compiler still
@@ -269,9 +273,8 @@ done
 finish_stage configure
 
 # The bootstrap runtimes configure uses the just-built stage1 clang as the
-# host compiler and tests `-fuse-ld=lld`.  Build the matching stage1 lld first
-# so clang finds an LLVM ${LLVM_VERSION} linker next to itself instead of
-# falling back to Alpine's system lld.
+# host compiler and tests -fuse-ld with the stage1 ld.lld path from
+# RUNTIMES_CMAKE_ARGS. Build that linker before the runtimes configure starts.
 echo "=== Stage 2b: Building stage1 lld for runtimes configure ==="
 cmake --build "${LLVM_BUILD_DIR}" --target lld
 if [ ! -e "${LLVM_BUILD_DIR}/bin/ld.lld" ]; then
