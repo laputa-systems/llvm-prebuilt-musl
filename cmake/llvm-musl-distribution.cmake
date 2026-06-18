@@ -1,0 +1,90 @@
+# ── Host tool paths (set by build script env vars) ──────────────────
+if(DEFINED ENV{LLVM_NATIVE_TOOL_DIR})
+    set(LLVM_NATIVE_TOOL_DIR $ENV{LLVM_NATIVE_TOOL_DIR} CACHE FILEPATH "")
+    message(STATUS "LLVM_NATIVE_TOOL_DIR: ${LLVM_NATIVE_TOOL_DIR}")
+endif()
+if(DEFINED ENV{CLANG_TABLEGEN})
+    set(CLANG_TABLEGEN $ENV{CLANG_TABLEGEN} CACHE FILEPATH "")
+endif()
+if(DEFINED ENV{LLVM_TABLEGEN})
+    set(LLVM_TABLEGEN $ENV{LLVM_TABLEGEN} CACHE FILEPATH "")
+endif()
+if(DEFINED ENV{LLVM_CONFIG_PATH})
+    set(LLVM_CONFIG_PATH $ENV{LLVM_CONFIG_PATH} CACHE FILEPATH "")
+endif()
+if(DEFINED ENV{LLVM_VERSION})
+    set(LLVM_VERSION $ENV{LLVM_VERSION} CACHE FILEPATH "")
+endif()
+if(DEFINED ENV{CMAKE_INSTALL_PREFIX})
+    set(CMAKE_INSTALL_PREFIX $ENV{CMAKE_INSTALL_PREFIX} CACHE FILEPATH "")
+endif()
+
+# ── Build configuration ──────────────────────────────────────────────
+set(CMAKE_BUILD_TYPE Release CACHE STRING "")
+set(LLVM_ENABLE_ASSERTIONS OFF CACHE BOOL "")
+set(LLVM_INCLUDE_DOCS OFF CACHE BOOL "")
+set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "")
+set(LLVM_INCLUDE_BENCHMARKS OFF CACHE BOOL "")
+set(LLVM_INCLUDE_EXAMPLES OFF CACHE BOOL "")
+set(LLVM_INCLUDE_GO_TESTS OFF CACHE BOOL "")
+set(LLVM_BUILD_UTILS OFF CACHE BOOL "")
+set(LLVM_INSTALL_UTILS OFF CACHE BOOL "")
+
+# ── Target backends: only what Laputa targets ────────────────────────
+set(LLVM_TARGETS_TO_BUILD "X86;AArch64" CACHE STRING "" FORCE)
+
+# ── Projects: no clang-tools-extra ───────────────────────────────────
+set(LLVM_ENABLE_PROJECTS "clang;lld" CACHE STRING "" FORCE)
+
+# ── Disable optional dependencies ────────────────────────────────────
+set(LLVM_ENABLE_LIBXML2 OFF CACHE BOOL "" FORCE)
+set(LLVM_ENABLE_ZLIB OFF CACHE BOOL "" FORCE)
+set(LLVM_ENABLE_ZSTD OFF CACHE BOOL "" FORCE)
+set(LLVM_ENABLE_TERMINFO OFF CACHE BOOL "" FORCE)
+set(LLVM_ENABLE_BACKTRACES OFF CACHE BOOL "" FORCE)
+set(LLVM_ENABLE_UNWIND_TABLES OFF CACHE BOOL "" FORCE)
+set(LLVM_ENABLE_EH OFF CACHE BOOL "" FORCE)
+set(LLVM_ENABLE_RTTI OFF CACHE BOOL "" FORCE)
+
+# ── Runtimes: compiler-rt builtins + libc++ + libcxxabi ──────────────
+# libc++/libcxxabi are LLVM code, not GNU — building them in stage1 is fine.
+set(LLVM_ENABLE_RUNTIMES "compiler-rt;libcxx;libcxxabi;libunwind" CACHE STRING "" FORCE)
+set(COMPILER_RT_BUILD_BUILTINS ON CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_SANITIZERS OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_XRAY OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_LIBFUZZER OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_PROFILE OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_MEMPROF OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_ORC OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_GWP_ASAN OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_CTX_PROFILE OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_XRAY_NO_PREINIT OFF CACHE BOOL "" FORCE)
+set(COMPILER_RT_BUILD_SCUDO_STANDALONE_WITH_LLVM_LIBC OFF CACHE BOOL "" FORCE)
+
+# ── Distribution: tools only, no development libs/headers/exports ────
+set(LLVM_DISTRIBUTION_COMPONENTS
+    clang
+    clang-resource-headers
+    lld
+    LTO
+    llvm-ar
+    llvm-nm
+    llvm-objcopy
+    llvm-objdump
+    llvm-ranlib
+    llvm-readelf
+    llvm-readobj
+    llvm-size
+    llvm-strings
+    llvm-strip
+    llvm-symbolizer
+    CACHE STRING "" FORCE)
+
+# ── libc++ / libcxxabi / libunwind: static only ──────────────────────
+set(LIBCXX_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+set(LIBCXX_ENABLE_STATIC ON CACHE BOOL "" FORCE)
+set(LIBCXX_HAS_MUSL_LIBC ON CACHE BOOL "" FORCE)
+set(LIBCXXABI_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+set(LIBCXXABI_ENABLE_STATIC ON CACHE BOOL "" FORCE)
+set(LIBUNWIND_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+set(LIBUNWIND_ENABLE_STATIC ON CACHE BOOL "" FORCE)
