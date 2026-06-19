@@ -21,6 +21,14 @@ RUN apk update && apk add --no-cache \
     xz \
     zstd
 
+# Alpine x86_64 CRT startup objects contain zlib-compressed debug sections.
+# Strip them so the zlib-free same-tree ld.lld can link host probes.
+RUN set -eu; \
+    for obj in /usr/lib/*crt*.o /usr/lib/Scrt1.o; do \
+        [ -e "$obj" ] || continue; \
+        strip --strip-debug "$obj"; \
+    done
+
 # Alpine linux-headers omits some kernel UAPI headers that libcxx expects.
 # Provide minimal stubs with just the constants libcxx needs.
 RUN mkdir -p /usr/include/linux && \
