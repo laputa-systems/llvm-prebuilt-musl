@@ -80,6 +80,104 @@ set(LLVM_DISTRIBUTION_COMPONENTS
     llvm-symbolizer
     CACHE STRING "" FORCE)
 
+set(LLVM_UNUSED_TOOL_DIRS
+    bugpoint
+    bugpoint-passes
+    dsymutil
+    dxil-dis
+    gold
+    llc
+    lli
+    llvm-as
+    llvm-as-fuzzer
+    llvm-bcanalyzer
+    llvm-c-test
+    llvm-cas
+    llvm-cat
+    llvm-cfi-verify
+    llvm-cgdata
+    llvm-cov
+    llvm-ctxprof-util
+    llvm-cvtres
+    llvm-cxxdump
+    llvm-cxxfilt
+    llvm-cxxmap
+    llvm-debuginfo-analyzer
+    llvm-debuginfod
+    llvm-debuginfod-find
+    llvm-diff
+    llvm-dis
+    llvm-dis-fuzzer
+    llvm-dlang-demangle-fuzzer
+    llvm-driver
+    llvm-dwarfdump
+    llvm-dwarfutil
+    llvm-dwp
+    llvm-exegesis
+    llvm-extract
+    llvm-gpu-loader
+    llvm-gsymutil
+    llvm-ifs
+    llvm-ir2vec
+    llvm-isel-fuzzer
+    llvm-itanium-demangle-fuzzer
+    llvm-jitlink
+    llvm-jitlistener
+    llvm-libtool-darwin
+    llvm-link
+    llvm-lipo
+    llvm-lto
+    llvm-lto2
+    llvm-mc
+    llvm-mc-assemble-fuzzer
+    llvm-mc-disassemble-fuzzer
+    llvm-mca
+    llvm-microsoft-demangle-fuzzer
+    llvm-ml
+    llvm-modextract
+    llvm-mt
+    llvm-offload-binary
+    llvm-offload-wrapper
+    llvm-opt-fuzzer
+    llvm-opt-report
+    llvm-pdbutil
+    llvm-profdata
+    llvm-profgen
+    llvm-rc
+    llvm-readtapi
+    llvm-reduce
+    llvm-remarkutil
+    llvm-rtdyld
+    llvm-rust-demangle-fuzzer
+    llvm-shlib
+    llvm-sim
+    llvm-special-case-list-fuzzer
+    llvm-split
+    llvm-stress
+    llvm-tli-checker
+    llvm-undname
+    llvm-xray
+    llvm-yaml-numeric-parser-fuzzer
+    llvm-yaml-parser-fuzzer
+    obj2yaml
+    opt
+    opt-viewer
+    reduce-chunk-list
+    remarks-shlib
+    sancov
+    sanstats
+    spirv-tools
+    verify-uselistorder
+    vfabi-demangle-fuzzer
+    xcode-toolchain
+    yaml2obj)
+
+foreach(tool IN LISTS LLVM_UNUSED_TOOL_DIRS)
+    string(REPLACE "-" "_" tool_var "${tool}")
+    string(TOUPPER "${tool_var}" tool_var)
+    set("LLVM_TOOL_${tool_var}_BUILD" OFF CACHE BOOL "" FORCE)
+endforeach()
+
 # ── libc++ / libcxxabi / libunwind: static only ──────────────────────
 set(LIBCXX_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
 set(LIBCXX_ENABLE_STATIC ON CACHE BOOL "" FORCE)

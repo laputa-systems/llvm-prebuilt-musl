@@ -34,6 +34,7 @@ ifeq ($(USE_CCACHE),1)
 		-e LLVM_USE_CCACHE=1 \
 		-e CCACHE_DIR=/root/.ccache \
 		-e CCACHE_COMPRESS=1 \
+		-e CCACHE_COMPILERCHECK=content \
 		$(DOCKER_TAG) /work/llvm-prebuilt/scripts/build-llvm-musl.sh
 else
 	docker run --rm --platform $(DOCKER_PLATFORM) \
