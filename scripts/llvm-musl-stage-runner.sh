@@ -178,9 +178,9 @@ RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_GWP_ASAN=OFF"
 RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_CTX_PROFILE=OFF"
 RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_XRAY_NO_PREINIT=OFF"
 RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_SCUDO_STANDALONE_WITH_LLVM_LIBC=OFF"
-# LLVM's runtimes sub-build inherits LLVM_USE_LINKER=lld from LLVM_ENABLE_LLD
-# and then probes -fuse-ld=lld. Use the validated stage1 linker path so the
-# probe does not depend on PATH or clang's linker-name lookup.
+# The runtimes sub-build probes LLVM_USE_LINKER with -fuse-ld. Keep the
+# absolute stage1 linker path here, and make stage2 pass through the same value
+# below, so the probe does not depend on PATH or clang's linker-name lookup.
 RUNTIMES_CMAKE_ARGS+=";-DLLVM_USE_LINKER=${LLVM_BUILD_DIR}/bin/ld.lld"
 # Bootstrap: stage1 builds clang/lld with Alpine's clang, linked against
 # the host libstdc++ (not shipped).  Stage2 statically links libstdc++
@@ -210,6 +210,12 @@ BOOTSTRAP_CMAKE_ARGS+=";-Wno-dev"
 BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_CXX_STDLIB=libc++"
 BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_RTLIB=compiler-rt"
 BOOTSTRAP_CMAKE_ARGS+=";-DLLVM_PARALLEL_LINK_JOBS=${LLVM_PARALLEL_LINK_JOBS}"
+# BOOTSTRAP_LLVM_ENABLE_LLD=ON passes LLVM_ENABLE_LLD=ON into stage2 before
+# CLANG_BOOTSTRAP_CMAKE_ARGS. Override it here with LLVM_USE_LINKER set to the
+# validated stage1 linker path. That also makes the later runtimes passthrough
+# carry the path instead of resetting LLVM_USE_LINKER to plain "lld".
+BOOTSTRAP_CMAKE_ARGS+=";-DLLVM_ENABLE_LLD=OFF"
+BOOTSTRAP_CMAKE_ARGS+=";-DLLVM_USE_LINKER=${LLVM_BUILD_DIR}/bin/ld.lld"
 BOOTSTRAP_CMAKE_ARGS+=";-DCMAKE_EXE_LINKER_FLAGS=${STAGE2_LINKER_FLAGS}"
 BOOTSTRAP_CMAKE_ARGS+=";-DCMAKE_SHARED_LINKER_FLAGS=${STAGE2_LINKER_FLAGS}"
 BOOTSTRAP_CMAKE_ARGS+=";-DCMAKE_MODULE_LINKER_FLAGS=${STAGE2_LINKER_FLAGS}"
@@ -267,6 +273,10 @@ grep -q "^LLVM_DEFAULT_TARGET_TRIPLE:.*=${TARGET_TRIPLE}$" "${LLVM_BUILD_DIR}/CM
     die "target CMake cache does not contain LLVM_DEFAULT_TARGET_TRIPLE=${TARGET_TRIPLE}"
 grep -q "^CLANG_ENABLE_BOOTSTRAP:.*=ON$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
     die "target CMake cache does not have CLANG_ENABLE_BOOTSTRAP=ON"
+grep -F -- "-DLLVM_ENABLE_LLD=OFF" "${LLVM_BUILD_DIR}/CMakeCache.txt" >/dev/null ||
+    die "stage2 bootstrap args do not disable LLVM_ENABLE_LLD before setting LLVM_USE_LINKER"
+grep -F -- "-DLLVM_USE_LINKER=${LLVM_BUILD_DIR}/bin/ld.lld" "${LLVM_BUILD_DIR}/CMakeCache.txt" >/dev/null ||
+    die "stage2 bootstrap args do not pin LLVM_USE_LINKER to stage1 ld.lld"
 for tool in llvm-tblgen clang-tblgen llvm-config llvm-nm llvm-readobj; do
     require_executable "${LLVM_BUILD_DIR}/bin/${tool}" "copied bootstrap host tool"
 done
@@ -284,6 +294,21 @@ require_executable "${LLVM_BUILD_DIR}/bin/lld" "stage1 lld"
 require_executable "${LLVM_BUILD_DIR}/bin/ld.lld" "stage1 ld.lld"
 "${LLVM_BUILD_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION}" ||
     die "stage1 ld.lld version is not ${LLVM_VERSION}"
+
+echo "=== Stage 2b: Reconfiguring bootstrap to pin stage1 ld.lld ==="
+cmake -G Ninja -S "${LLVM_PROJECT_DIR}/llvm" -B "${LLVM_BUILD_DIR}" \
+    "${STAGE2_ARGS[@]}" \
+    -DLLVM_ENABLE_LLD=OFF \
+    -DLLVM_USE_LINKER="${LLVM_BUILD_DIR}/bin/ld.lld"
+grep -q "^LLVM_ENABLE_LLD:.*=OFF$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
+    die "target CMake cache does not have LLVM_ENABLE_LLD=OFF after stage1 lld reconfigure"
+grep -q "^LLVM_USE_LINKER:.*=${LLVM_BUILD_DIR}/bin/ld.lld$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
+    die "target CMake cache does not pin LLVM_USE_LINKER to stage1 ld.lld"
+if grep -F -- "-DLLVM_USE_LINKER=lld" "${LLVM_BUILD_DIR}/build.ninja" >/dev/null; then
+    die "target build graph still contains unqualified -DLLVM_USE_LINKER=lld"
+fi
+grep -F -- "-DLLVM_USE_LINKER=${LLVM_BUILD_DIR}/bin/ld.lld" "${LLVM_BUILD_DIR}/build.ninja" >/dev/null ||
+    die "target build graph does not pass stage1 ld.lld to nested CMake builds"
 finish_stage stage1-lld
 
 # ── Stage 3+4: Build + Install (bootstrap) ───────────────────────────────
