@@ -71,9 +71,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ccache
-          key: ccache-${{matrix.arch}}-${{matrix.version}}-${{github.run_id}}-${{github.run_attempt}}
+          key: ccache-${{matrix.arch}}-${{matrix.version}}-v2-${{github.run_id}}-${{github.run_attempt}}
           restore-keys: |
-            ccache-${{matrix.arch}}-${{matrix.version}}-
+            ccache-${{matrix.arch}}-${{matrix.version}}-v2-
 
       - name: Build Docker image
         run: |
@@ -87,7 +87,9 @@ jobs:
           docker run --rm --platform linux/${{matrix.alpine_arch}} \
             -v "$PWD/ccache:/root/.ccache" \
             -e CCACHE_DIR=/root/.ccache \
-            -e CCACHE_COMPILERCHECK=content \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
             llvm-musl ccache --zero-stats
 
       - name: Stage 1 - host tools
@@ -101,7 +103,9 @@ jobs:
             -e CCACHE_DIR=/root/.ccache \
             -e CCACHE_COMPRESS=1 \
             -e CCACHE_MAXSIZE=5G \
-            -e CCACHE_COMPILERCHECK=content \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
             llvm-musl sh -euc "
               export LLVM_PROJECT_DIR='$PWD/llvm-project'
               export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
@@ -132,7 +136,9 @@ jobs:
             -e CCACHE_DIR=/root/.ccache \
             -e CCACHE_COMPRESS=1 \
             -e CCACHE_MAXSIZE=5G \
-            -e CCACHE_COMPILERCHECK=content \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
             llvm-musl sh -euc "
               export LLVM_PROJECT_DIR='$PWD/llvm-project'
               export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
@@ -155,7 +161,9 @@ jobs:
             -e CCACHE_DIR=/root/.ccache \
             -e CCACHE_COMPRESS=1 \
             -e CCACHE_MAXSIZE=5G \
-            -e CCACHE_COMPILERCHECK=content \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
             llvm-musl sh -euc "
               export LLVM_PROJECT_DIR='$PWD/llvm-project'
               export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
@@ -178,7 +186,9 @@ jobs:
             -e CCACHE_DIR=/root/.ccache \
             -e CCACHE_COMPRESS=1 \
             -e CCACHE_MAXSIZE=5G \
-            -e CCACHE_COMPILERCHECK=content \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
             llvm-musl sh -euc "
               export LLVM_PROJECT_DIR='$PWD/llvm-project'
               export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
@@ -201,7 +211,9 @@ jobs:
             -e CCACHE_DIR=/root/.ccache \
             -e CCACHE_COMPRESS=1 \
             -e CCACHE_MAXSIZE=5G \
-            -e CCACHE_COMPILERCHECK=content \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
             llvm-musl sh -euc "
               export LLVM_PROJECT_DIR='$PWD/llvm-project'
               export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
@@ -229,7 +241,9 @@ jobs:
           docker run --rm --platform linux/${{matrix.alpine_arch}} \
             -v "$PWD/ccache:/root/.ccache" \
             -e CCACHE_DIR=/root/.ccache \
-            -e CCACHE_COMPILERCHECK=content \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
             llvm-musl ccache --show-stats
 
       - name: Save ccache
