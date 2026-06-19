@@ -281,7 +281,7 @@ require_executable "${LLVM_BUILD_DIR}/bin/ld.lld" "stage1 ld.lld"
 "${LLVM_BUILD_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION}" ||
     die "stage1 ld.lld version is not ${LLVM_VERSION}"
 printf 'int main(void) { return 0; }\n' |
-    "${LLVM_BUILD_DIR}/bin/clang" -x c - -fuse-ld=lld -o "${LLVM_BUILD_DIR}/stage1-lld-link-check" ||
+    clang -x c - -fuse-ld="${LLVM_BUILD_DIR}/bin/ld.lld" -o "${LLVM_BUILD_DIR}/stage1-lld-link-check" ||
     die "stage1 ld.lld cannot link a trivial host executable"
 finish_stage stage1-lld
 
