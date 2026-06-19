@@ -21,10 +21,11 @@ RUN apk update && apk add --no-cache \
     xz \
     zstd
 
-# Alpine x86_64 CRT startup objects contain zlib-compressed debug sections.
-# Strip them so the zlib-free same-tree ld.lld can link host probes.
+# Alpine x86_64 CRT and GCC runtime objects contain zlib-compressed debug
+# sections. Strip them so the zlib-free same-tree ld.lld can link host probes
+# and the stage2 tools that use -static-libgcc.
 RUN set -eu; \
-    for obj in /usr/lib/*crt*.o /usr/lib/Scrt1.o; do \
+    for obj in /usr/lib/*crt*.o /usr/lib/Scrt1.o /usr/lib/gcc/*/*/libgcc*.a; do \
         [ -e "$obj" ] || continue; \
         strip --strip-debug "$obj"; \
     done

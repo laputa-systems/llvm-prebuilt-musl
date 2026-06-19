@@ -283,6 +283,9 @@ require_executable "${LLVM_BUILD_DIR}/bin/ld.lld" "stage1 ld.lld"
 printf 'int main(void) { return 0; }\n' |
     clang -x c - -fuse-ld="${LLVM_BUILD_DIR}/bin/ld.lld" -o "${LLVM_BUILD_DIR}/stage1-lld-link-check" ||
     die "stage1 ld.lld cannot link a trivial host executable"
+printf 'int main() { return 0; }\n' |
+    clang++ -x c++ - -static-libstdc++ -static-libgcc -fuse-ld="${LLVM_BUILD_DIR}/bin/ld.lld" -o "${LLVM_BUILD_DIR}/stage1-lld-static-link-check" ||
+    die "stage1 ld.lld cannot link a static-libgcc host executable"
 finish_stage stage1-lld
 
 # ── Stage 3+4: Build + Install (bootstrap) ───────────────────────────────
