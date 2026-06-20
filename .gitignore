@@ -1,0 +1,4 @@
+build*.log
+llvm-install/
+llvm-build/
+llvm-host/

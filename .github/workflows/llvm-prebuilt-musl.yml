@@ -1,0 +1,300 @@
+name: LLVM prebuilt musl
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: LLVM ${{matrix.version}} [${{matrix.arch}}-linux-musl]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        version: [22.1.8]
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            alpine_arch: x86_64
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            alpine_arch: aarch64
+    runs-on: ${{matrix.runner}}
+    steps:
+      - name: Clone llvm-prebuilt
+        uses: actions/checkout@v4
+        with:
+          path: llvm-prebuilt
+
+      # -- LLVM source --
+
+      - name: Restore LLVM source tarball cache
+        id: cache-llvm-source
+        uses: actions/cache/restore@v4
+        with:
+          path: llvm-project.tar.xz
+          key: llvm-source-${{matrix.version}}-v1
+
+      - name: Download LLVM ${{matrix.version}} source
+        if: steps.cache-llvm-source.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o llvm-project.tar.xz \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{matrix.version}}/llvm-project-${{matrix.version}}.src.tar.xz"
+
+      - name: Save LLVM source tarball cache
+        if: steps.cache-llvm-source.outputs.cache-hit != 'true' && hashFiles('llvm-project.tar.xz') != ''
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: llvm-project.tar.xz
+          key: llvm-source-${{matrix.version}}-v1
+
+      - name: Extract LLVM source
+        run: |
+          mkdir -p llvm-project
+          tar -xf llvm-project.tar.xz -C llvm-project --strip-components=1
+
+      # -- host tools cache --
+
+      - name: Restore host tools cache
+        id: cache-host-tools
+        uses: actions/cache/restore@v4
+        with:
+          path: llvm-host
+          key: llvm-host-${{matrix.arch}}-${{matrix.version}}-v1
+
+      # -- build inside Alpine container --
+
+      - name: Prepare ccache directory
+        run: mkdir -p ccache
+
+      - name: Restore ccache
+        id: cache-ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ccache
+          key: ccache-${{matrix.arch}}-${{matrix.version}}-v2-${{github.run_id}}-${{github.run_attempt}}
+          restore-keys: |
+            ccache-${{matrix.arch}}-${{matrix.version}}-v2-
+
+      - name: Build Docker image
+        run: |
+          docker build --platform linux/${{matrix.alpine_arch}} \
+            -t llvm-musl \
+            -f llvm-prebuilt/docker/alpine-llvm-musl.Dockerfile \
+            llvm-prebuilt
+
+      - name: Reset ccache stats
+        run: |
+          docker run --rm --platform linux/${{matrix.alpine_arch}} \
+            -v "$PWD/ccache:/root/.ccache" \
+            -e CCACHE_DIR=/root/.ccache \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
+            llvm-musl ccache --zero-stats
+
+      - name: Stage 1 - host tools
+        run: |
+          docker run --rm --platform linux/${{matrix.alpine_arch}} \
+            -v "$PWD:$PWD" -w "$PWD" \
+            -v "$PWD/ccache:/root/.ccache" \
+            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_ARCH=${{matrix.arch}} \
+            -e LLVM_USE_CCACHE=1 \
+            -e CCACHE_DIR=/root/.ccache \
+            -e CCACHE_COMPRESS=1 \
+            -e CCACHE_MAXSIZE=5G \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
+            llvm-musl sh -euc "
+              export LLVM_PROJECT_DIR='$PWD/llvm-project'
+              export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
+              export LLVM_BUILD_DIR='$PWD/llvm-build'
+              export LLVM_HOST_BUILD_DIR='$PWD/llvm-host'
+              export LLVM_HOST_TOOLS_DIR='$PWD/llvm-host/bin'
+              export CMAKE_INSTALL_PREFIX='$PWD/llvm-install'
+
+              \"\$LLVM_PREBUILT_DIR/scripts/stages/host-tools.sh\"
+            "
+
+      - name: Save host tools cache
+        if: always() && steps.cache-host-tools.outputs.cache-hit != 'true' && hashFiles('llvm-host/bin/llvm-tblgen') != ''
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: llvm-host
+          key: llvm-host-${{matrix.arch}}-${{matrix.version}}-v1
+
+      - name: Stage 2 - configure bootstrap
+        run: |
+          docker run --rm --platform linux/${{matrix.alpine_arch}} \
+            -v "$PWD:$PWD" -w "$PWD" \
+            -v "$PWD/ccache:/root/.ccache" \
+            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_ARCH=${{matrix.arch}} \
+            -e LLVM_USE_CCACHE=1 \
+            -e CCACHE_DIR=/root/.ccache \
+            -e CCACHE_COMPRESS=1 \
+            -e CCACHE_MAXSIZE=5G \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
+            llvm-musl sh -euc "
+              export LLVM_PROJECT_DIR='$PWD/llvm-project'
+              export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
+              export LLVM_BUILD_DIR='$PWD/llvm-build'
+              export LLVM_HOST_BUILD_DIR='$PWD/llvm-host'
+              export LLVM_HOST_TOOLS_DIR='$PWD/llvm-host/bin'
+              export CMAKE_INSTALL_PREFIX='$PWD/llvm-install'
+
+              \"\$LLVM_PREBUILT_DIR/scripts/stages/configure.sh\"
+            "
+
+      - name: Stage 2b - stage1 lld
+        run: |
+          docker run --rm --platform linux/${{matrix.alpine_arch}} \
+            -v "$PWD:$PWD" -w "$PWD" \
+            -v "$PWD/ccache:/root/.ccache" \
+            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_ARCH=${{matrix.arch}} \
+            -e LLVM_USE_CCACHE=1 \
+            -e CCACHE_DIR=/root/.ccache \
+            -e CCACHE_COMPRESS=1 \
+            -e CCACHE_MAXSIZE=5G \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
+            llvm-musl sh -euc "
+              export LLVM_PROJECT_DIR='$PWD/llvm-project'
+              export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
+              export LLVM_BUILD_DIR='$PWD/llvm-build'
+              export LLVM_HOST_BUILD_DIR='$PWD/llvm-host'
+              export LLVM_HOST_TOOLS_DIR='$PWD/llvm-host/bin'
+              export CMAKE_INSTALL_PREFIX='$PWD/llvm-install'
+
+              \"\$LLVM_PREBUILT_DIR/scripts/stages/stage1-lld.sh\"
+            "
+
+      - name: Stage 3 - stage2 bootstrap
+        run: |
+          docker run --rm --platform linux/${{matrix.alpine_arch}} \
+            -v "$PWD:$PWD" -w "$PWD" \
+            -v "$PWD/ccache:/root/.ccache" \
+            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_ARCH=${{matrix.arch}} \
+            -e LLVM_USE_CCACHE=1 \
+            -e CCACHE_DIR=/root/.ccache \
+            -e CCACHE_COMPRESS=1 \
+            -e CCACHE_MAXSIZE=5G \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
+            llvm-musl sh -euc "
+              export LLVM_PROJECT_DIR='$PWD/llvm-project'
+              export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
+              export LLVM_BUILD_DIR='$PWD/llvm-build'
+              export LLVM_HOST_BUILD_DIR='$PWD/llvm-host'
+              export LLVM_HOST_TOOLS_DIR='$PWD/llvm-host/bin'
+              export CMAKE_INSTALL_PREFIX='$PWD/llvm-install'
+
+              \"\$LLVM_PREBUILT_DIR/scripts/stages/stage2.sh\"
+            "
+
+      - name: Stage 4/5 - install and validate
+        run: |
+          docker run --rm --platform linux/${{matrix.alpine_arch}} \
+            -v "$PWD:$PWD" -w "$PWD" \
+            -v "$PWD/ccache:/root/.ccache" \
+            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_ARCH=${{matrix.arch}} \
+            -e LLVM_USE_CCACHE=1 \
+            -e CCACHE_DIR=/root/.ccache \
+            -e CCACHE_COMPRESS=1 \
+            -e CCACHE_MAXSIZE=5G \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
+            llvm-musl sh -euc "
+              export LLVM_PROJECT_DIR='$PWD/llvm-project'
+              export LLVM_PREBUILT_DIR='$PWD/llvm-prebuilt'
+              export LLVM_BUILD_DIR='$PWD/llvm-build'
+              export LLVM_HOST_BUILD_DIR='$PWD/llvm-host'
+              export LLVM_HOST_TOOLS_DIR='$PWD/llvm-host/bin'
+              export CMAKE_INSTALL_PREFIX='$PWD/llvm-install'
+
+              \"\$LLVM_PREBUILT_DIR/scripts/stages/install-validate.sh\"
+            "
+
+      - name: Check ccache contents
+        id: ccache-contents
+        if: always()
+        run: |
+          if [ -d ccache ] && find ccache -type f -print -quit | grep -q .; then
+            echo "present=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Show ccache stats
+        if: always()
+        run: |
+          docker run --rm --platform linux/${{matrix.alpine_arch}} \
+            -v "$PWD/ccache:/root/.ccache" \
+            -e CCACHE_DIR=/root/.ccache \
+            -e CCACHE_COMPILERCHECK='%compiler% -v' \
+            -e CCACHE_BASEDIR="$PWD" \
+            -e CCACHE_NOHASHDIR=1 \
+            llvm-musl ccache --show-stats
+
+      - name: Save ccache
+        if: always() && steps.ccache-contents.outputs.present == '1'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ccache
+          key: ${{steps.cache-ccache.outputs.cache-primary-key}}
+
+      # -- package --
+
+      - name: Package LLVM
+        run: |
+          mv llvm-install "clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl"
+          tar -cJf "clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl.tar.xz" \
+            "clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl"
+
+      - name: Upload LLVM package
+        uses: actions/upload-artifact@v4
+        with:
+          name: clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl
+          path: clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl.tar.xz
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: clang+llvm-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum -- *.tar.xz > checksums
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="llvm-musl-22.1.8"
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes ""
