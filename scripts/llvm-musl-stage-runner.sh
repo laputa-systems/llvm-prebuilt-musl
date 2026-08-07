@@ -329,21 +329,40 @@ BUILTINS_DIR="${RESOURCE_DIR}/lib/linux"
 mkdir -p "${BUILTINS_DIR}"
 
 # compiler-rt may name the archive libclang_rt.builtins.a (no arch suffix)
-# or libclang_rt.builtins-<arch>.a. We normalize to libclang_rt.builtins-<arch>.a.
-find "${LLVM_BUILD_DIR}/tools/clang/stage2-bins/lib/clang" \( -name 'libclang_rt.builtins-*.a' -o -name 'libclang_rt.builtins.a' \) 2>/dev/null | while read -r archive; do
-    target_name="libclang_rt.builtins-${LLVM_ARCH}.a"
-    cp "$archive" "${BUILTINS_DIR}/${target_name}"
-    echo "Copied $(basename "$archive") → ${BUILTINS_DIR}/${target_name} (from stage2 build tree)"
-done
-
-# Also check the install tree in case a future LLVM version installs them there.
-find "${CMAKE_INSTALL_PREFIX}/lib/clang" \( -name 'libclang_rt.builtins-*.a' -o -name 'libclang_rt.builtins.a' \) 2>/dev/null | while read -r archive; do
-    target_name="libclang_rt.builtins-${LLVM_ARCH}.a"
-    if [ ! -f "${BUILTINS_DIR}/${target_name}" ]; then
-        cp "$archive" "${BUILTINS_DIR}/${target_name}"
-        echo "Copied $(basename "$archive") → ${BUILTINS_DIR}/${target_name} (from install tree)"
+# or libclang_rt.builtins-<arch>.a. Select the target-specific directory before
+# normalizing to libclang_rt.builtins-<arch>.a; x86 builds also contain i386
+# builtins, which must never replace the x86_64 archive.
+BUILTINS_SRC=""
+for candidate in \
+    "${LLVM_BUILD_DIR}/tools/clang/stage2-bins/lib/clang/${CLANG_MAJOR}/lib/${LLVM_ARCH}-unknown-linux-musl/libclang_rt.builtins.a" \
+    "${LLVM_BUILD_DIR}/tools/clang/stage2-bins/lib/clang/${CLANG_MAJOR}/lib/${LLVM_ARCH}-linux-musl/libclang_rt.builtins.a" \
+    "${LLVM_BUILD_DIR}/tools/clang/stage2-bins/lib/clang/${CLANG_MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a"; do
+    if [ -f "$candidate" ]; then
+        BUILTINS_SRC="$candidate"
+        break
     fi
 done
+if [ -z "$BUILTINS_SRC" ]; then
+    BUILTINS_SRC=$(find "${LLVM_BUILD_DIR}/tools/clang/stage2-bins/lib/clang" \
+        -type f \( -path "*/${LLVM_ARCH}-*/libclang_rt.builtins.a" -o -name "libclang_rt.builtins-${LLVM_ARCH}.a" \) \
+        -print -quit 2>/dev/null) || true
+fi
+if [ -n "$BUILTINS_SRC" ]; then
+    target_name="libclang_rt.builtins-${LLVM_ARCH}.a"
+    cp "$BUILTINS_SRC" "${BUILTINS_DIR}/${target_name}"
+    echo "Copied $(basename "$BUILTINS_SRC") → ${BUILTINS_DIR}/${target_name} (from stage2 build tree)"
+fi
+
+# Also check the install tree in case a future LLVM version installs them there.
+if [ ! -f "${BUILTINS_DIR}/libclang_rt.builtins-${LLVM_ARCH}.a" ]; then
+    BUILTINS_SRC=$(find "${CMAKE_INSTALL_PREFIX}/lib/clang" \
+        -type f \( -path "*/${LLVM_ARCH}-*/libclang_rt.builtins.a" -o -name "libclang_rt.builtins-${LLVM_ARCH}.a" \) \
+        -print -quit 2>/dev/null) || true
+    if [ -n "$BUILTINS_SRC" ]; then
+        cp "$BUILTINS_SRC" "${BUILTINS_DIR}/libclang_rt.builtins-${LLVM_ARCH}.a"
+        echo "Copied $(basename "$BUILTINS_SRC") → ${BUILTINS_DIR}/libclang_rt.builtins-${LLVM_ARCH}.a (from install tree)"
+    fi
+fi
 
 # ── Libc++ headers and libraries ──────────────────────────────────────
 # install-distribution does not include runtime components, so copy
@@ -357,7 +376,23 @@ done
 #   fatal error: '__config_site' file not found
 # Both must be copied.
 
-LIBCXX_HEADERS_SRC=$(find "${LLVM_BUILD_DIR}/tools/clang/stage2-bins" -type d -name 'v1' -path '*/c++/v1' -not -path '*/__config_site*' 2>/dev/null | head -1) || true
+# The runtime build places the libc++ source headers in the top-level build
+# include directory.  A bootstrap runtime can also expose a second c++/v1
+# directory under stage2-bins; select only a candidate containing a real
+# standard header so filesystem traversal order cannot select an empty one.
+LIBCXX_HEADERS_SRC=""
+for candidate in \
+    "${LLVM_BUILD_DIR}/include/c++/v1" \
+    "${LLVM_BUILD_DIR}/tools/clang/stage2-bins/include/c++/v1"; do
+    if [ -f "${candidate}/iostream" ]; then
+        LIBCXX_HEADERS_SRC="${candidate}"
+        break
+    fi
+done
+if [ -z "$LIBCXX_HEADERS_SRC" ]; then
+    LIBCXX_HEADERS_SRC=$(find "${LLVM_BUILD_DIR}/tools/clang/stage2-bins" \
+        -type f -path '*/c++/v1/iostream' -print -quit 2>/dev/null | sed 's:/iostream$::') || true
+fi
 if [ -n "$LIBCXX_HEADERS_SRC" ] && [ -d "$LIBCXX_HEADERS_SRC" ]; then
     LIBCXX_HEADERS_DST="${CMAKE_INSTALL_PREFIX}/include/c++/v1"
     mkdir -p "$(dirname "$LIBCXX_HEADERS_DST")"
@@ -414,6 +449,7 @@ require_file "${CMAKE_INSTALL_PREFIX}/bin/clang++.cfg" "clang++ driver config"
 require_dir "${CMAKE_INSTALL_PREFIX}/lib/clang/${CLANG_MAJOR}/include" "clang resource headers"
 require_file "${CMAKE_INSTALL_PREFIX}/lib/clang/${CLANG_MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a" "compiler-rt builtins"
 require_file "${CMAKE_INSTALL_PREFIX}/include/c++/v1/__config_site" "libc++ __config_site"
+require_file "${CMAKE_INSTALL_PREFIX}/include/c++/v1/iostream" "libc++ headers"
 for lib in libc++.a libc++abi.a libunwind.a; do
     require_file "${CMAKE_INSTALL_PREFIX}/lib/${lib}" "installed runtime archive"
 done
