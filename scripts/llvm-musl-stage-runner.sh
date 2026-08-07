@@ -114,7 +114,11 @@ else
         -DLLVM_ENABLE_PROJECTS="clang" \
         -DLLVM_ENABLE_RUNTIMES="" \
         -DLLVM_ENABLE_LIBXML2=OFF \
-        -DLLVM_ENABLE_ZLIB=OFF \
+        -DLLVM_ENABLE_ZLIB=ON \
+        -DZLIB_USE_STATIC_LIBS=ON \
+        -DZLIB_LIBRARY=/usr/lib/libz.a \
+        -DZLIB_LIBRARY_RELEASE=/usr/lib/libz.a \
+        -DZLIB_LIBRARY_DEBUG=/usr/lib/libz.a \
         -DLLVM_ENABLE_ZSTD=OFF \
         -DLLVM_ENABLE_TERMINFO=OFF \
         -DLLVM_ENABLE_Z3_SOLVER=OFF \
@@ -263,6 +267,12 @@ grep -q "^LLVM_DEFAULT_TARGET_TRIPLE:.*=${TARGET_TRIPLE}$" "${LLVM_BUILD_DIR}/CM
     die "target CMake cache does not contain LLVM_DEFAULT_TARGET_TRIPLE=${TARGET_TRIPLE}"
 grep -q "^CLANG_ENABLE_BOOTSTRAP:.*=ON$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
     die "target CMake cache does not have CLANG_ENABLE_BOOTSTRAP=ON"
+grep -q "^LLVM_ENABLE_ZLIB:.*=ON$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
+    die "target CMake cache does not have LLVM_ENABLE_ZLIB=ON"
+grep -q "^ZLIB_USE_STATIC_LIBS:.*=ON$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
+    die "target CMake cache does not have ZLIB_USE_STATIC_LIBS=ON"
+grep -qE '^ZLIB_LIBRARY(_RELEASE)?:.*=/usr/lib/libz\.a$' "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
+    die "target CMake cache does not select the static zlib archive"
 for tool in llvm-tblgen clang-tblgen llvm-config llvm-nm llvm-readobj; do
     require_executable "${LLVM_BUILD_DIR}/bin/${tool}" "copied bootstrap host tool"
 done
@@ -471,8 +481,9 @@ validate() {
             echo "$needed" | grep -q 'libunwind' && bad=1
             echo "$needed" | grep -q 'libgcc_s' && bad=1
             echo "$needed" | grep -q 'libstdc++' && bad=1
+            echo "$needed" | grep -q 'libz\.so' && bad=1
             if [ "$bad" -eq 1 ]; then
-                fail "${b}: glibc/libunwind/libgcc/libstdc++ in NEEDED"
+                fail "${b}: unexpected glibc/libz/GNU runtime in NEEDED"
             elif echo "$needed" | grep -q 'libc\.musl'; then
                 pass "${b}: musl-linked"
             else
@@ -496,8 +507,8 @@ validate() {
         fi
         local lto_needed
         lto_needed=$(readelf -d "$lto_lib" 2>/dev/null | grep NEEDED || true)
-        if echo "$lto_needed" | grep -qE 'libc\.so\.6|libgcc_s|libstdc\+\+|libunwind'; then
-            fail "libLTO.so: glibc/libunwind/libgcc/libstdc++ in NEEDED"
+        if echo "$lto_needed" | grep -qE 'libc\.so\.6|libgcc_s|libstdc\+\+|libunwind|libz\.so'; then
+            fail "libLTO.so: unexpected glibc/libz/GNU runtime in NEEDED"
         elif echo "$lto_needed" | grep -q 'libc\.musl'; then
             pass "libLTO.so: musl-linked"
         else
@@ -702,6 +713,14 @@ CEOF
         fail "llvm-objcopy: copy failed"
     fi
 
+    if "$objcopy" --compress-debug-sections=zlib "$workd/hello.o" "$workd/hello_zlib.o" 2>/dev/null &&
+       "$objcopy" --decompress-debug-sections "$workd/hello_zlib.o" "$workd/hello_uncompressed.o" 2>/dev/null &&
+       [ -s "$workd/hello_zlib.o" ] && [ -s "$workd/hello_uncompressed.o" ]; then
+        pass "llvm-objcopy: zlib debug-section compression works"
+    else
+        fail "llvm-objcopy: zlib debug-section compression failed"
+    fi
+
     # llvm-strip: strip the copy
     local syms_before syms_after
     syms_before=$("$nm" "$workd/hello_copy.o" 2>/dev/null | wc -l)
@@ -745,7 +764,7 @@ CEOF
         if [ -z "$linker_needed" ]; then
             pass "ld.lld output: static (no NEEDED)"
         elif echo "$linker_needed" | grep -q 'libc\.musl' &&
-             ! echo "$linker_needed" | grep -qE 'libc\.so\.6|libgcc_s|libstdc\+\+|libunwind'; then
+             ! echo "$linker_needed" | grep -qE 'libc\.so\.6|libgcc_s|libstdc\+\+|libunwind|libz\.so'; then
             pass "ld.lld output: musl-only NEEDED"
         else
             fail "ld.lld output: unexpected NEEDED entries"
@@ -780,7 +799,7 @@ CEOF
         cpp_needed=$(readelf -d "$workd/hello_cpp" 2>/dev/null | grep NEEDED || true)
         if [ -z "$cpp_needed" ]; then
             pass "clang++ link output: static (no NEEDED)"
-        elif echo "$cpp_needed" | grep -qE 'libc\.so\.6|libgcc_s|libstdc\+\+|libunwind'; then
+        elif echo "$cpp_needed" | grep -qE 'libc\.so\.6|libgcc_s|libstdc\+\+|libunwind|libz\.so'; then
             fail "clang++ link output: unexpected NEEDED entries"
         else
             pass "clang++ link output: musl-only NEEDED"

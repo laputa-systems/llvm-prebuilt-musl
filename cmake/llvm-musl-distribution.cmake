@@ -37,9 +37,13 @@ set(LLVM_TARGETS_TO_BUILD "X86;AArch64" CACHE STRING "" FORCE)
 # ── Projects: no clang-tools-extra ───────────────────────────────────
 set(LLVM_ENABLE_PROJECTS "clang;lld" CACHE STRING "" FORCE)
 
-# ── Disable optional dependencies ────────────────────────────────────
+# ── Optional dependencies ─────────────────────────────────────────────
 set(LLVM_ENABLE_LIBXML2 OFF CACHE BOOL "" FORCE)
-set(LLVM_ENABLE_ZLIB OFF CACHE BOOL "" FORCE)
+set(LLVM_ENABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(ZLIB_USE_STATIC_LIBS ON CACHE BOOL "" FORCE)
+set(ZLIB_LIBRARY /usr/lib/libz.a CACHE FILEPATH "" FORCE)
+set(ZLIB_LIBRARY_RELEASE /usr/lib/libz.a CACHE FILEPATH "" FORCE)
+set(ZLIB_LIBRARY_DEBUG /usr/lib/libz.a CACHE FILEPATH "" FORCE)
 set(LLVM_ENABLE_ZSTD OFF CACHE BOOL "" FORCE)
 set(LLVM_ENABLE_TERMINFO OFF CACHE BOOL "" FORCE)
 set(LLVM_ENABLE_BACKTRACES OFF CACHE BOOL "" FORCE)

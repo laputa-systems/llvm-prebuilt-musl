@@ -291,7 +291,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="llvm-musl-22.1.8"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAG="llvm-musl-22.1.8-${SHORT_SHA}"
           gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \

@@ -1,49 +1,9 @@
+# Internal Build Documentation
+
+User-facing artifact contents, usage, and Rust configuration are documented in `README.md`.
+
 Builds a musl-linked LLVM/Clang toolchain for `x86_64-linux-musl`, `aarch64-linux-musl`.
 Binaries are dynamically linked against musl only — zero GNU runtime dependencies.
-
-## Artifact Contents
-
-| Path | What |
-|------|------|
-| `bin/clang`, `bin/clang++`, `bin/clang-22` | C/C++ compiler (defaults: `-stdlib=libc++`, `--rtlib=compiler-rt`) |
-| `bin/lld`, `bin/ld.lld` | ELF linker |
-| `bin/llvm-{ar,nm,objcopy,objdump,ranlib,readelf,readobj,size,strings,strip,symbolizer}` | Binary utilities |
-| `lib/clang/22/include/` | Clang resource headers |
-| `lib/clang/22/lib/linux/libclang_rt.builtins-*.a` | compiler-rt builtins |
-| `include/c++/v1/` | libc++ headers |
-| `lib/libc++.a`, `lib/libc++abi.a`, `lib/libunwind.a` | C++ runtime (static only, no .so) |
-| `lib/libLTO.so` | LTO plugin (musl-linked) |
-
-Not included: sanitizers, shared C++ libraries, clang-tools-extra, cmake exports, libxml2/zlib/zstd/terminfo.
-
-## Usage
-
-```
-tar xf clang+llvm-22.1.8-aarch64-linux-musl.tar.xz
-export PATH="$PWD/clang+llvm-22.1.8-aarch64-linux-musl/bin:$PATH"
-```
-
-Compile and link:
-```
-clang   --target=aarch64-linux-musl --sysroot=/path/to/sysroot hello.c  -o hello
-clang++ --target=aarch64-linux-musl --sysroot=/path/to/sysroot hello.cpp -o hello
-```
-
-In most cases you also need to point at the shipped libc++ headers and libraries,
-since they live outside a typical musl sysroot:
-```
-clang++ --target=aarch64-linux-musl --sysroot=/path/to/sysroot         \
-        -cxx-isystem $TOOLCHAIN/include/c++/v1 -L $TOOLCHAIN/lib       \
-        hello.cpp -o hello
-```
-
-**Known issue**: clang targeting musl may not auto-append `-lc++abi -lunwind`.
-If linking fails with undefined `__cxa_*`/`_Unwind_*`/vtable symbols, add them explicitly:
-```
-clang++ ... -lc++abi -lunwind hello.cpp -o hello
-```
-
-Every shipped binary has only `libc.musl-*.so.1` in NEEDED (no libstdc++.so.6, no libgcc_s.so.1).
 
 ## Build
 
@@ -68,6 +28,7 @@ LLVM source → host tools → configure → stage1 lld → stage2 (shipped) →
 - **Stage1 linker**: build same-tree `lld` before stage2 runtimes configure so `-fuse-ld=lld`
   uses LLVM 22 `ld.lld`, not Alpine's packaged linker.
 - **Shipped defaults**: `CLANG_DEFAULT_CXX_STDLIB=libc++`, `CLANG_DEFAULT_RTLIB=compiler-rt`.
+- **Zlib support**: `LLVM_ENABLE_ZLIB=ON`, linked from Alpine's static `libz.a` so the artifact keeps no `libz.so` runtime dependency.
 - **Link parallelism**: `LLVM_PARALLEL_LINK_JOBS=2`.
 - **Build dirs**: mounted to host filesystem (Docker overlay would fill up with ~30 GB).
 
@@ -106,10 +67,10 @@ CI restores caches before the build and saves them at useful boundaries:
 
 ## Validation
 
-Runs inline during `scripts/stages/install-validate.sh`. Current coverage is 80 checks across:
+Runs inline during `scripts/stages/install-validate.sh`. Current coverage is 81 checks across:
 
 - ELF linkage — every binary + libLTO.so: musl interpreter, musl-only NEEDED
 - Artifact presence — all tools, headers, libraries present; no sanitizers
 - Tool exercise — compile C, compile C++, default stdlib, exceptions, TLS, nm,
-  readelf, readobj, objdump, objcopy, strip, ar+ranlib, lld (C + C++ link),
-  strings, size, symbolizer, runtime execution
+  readelf, readobj, objdump, objcopy, zlib debug-section compression, strip,
+  ar+ranlib, lld (C + C++ link), strings, size, symbolizer, runtime execution

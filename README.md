@@ -1,0 +1,117 @@
+# LLVM Prebuilt Musl
+
+Prebuilt LLVM/Clang 22.1.8 toolchains for `x86_64-linux-musl` and
+`aarch64-linux-musl`. Shipped binaries are dynamically linked against musl
+with no GNU runtime dependencies. LLVM zlib support is statically linked into
+the tools, so no separate `libz.so` is required.
+
+## Artifact Contents
+
+| Path | What |
+|------|------|
+| `bin/clang`, `bin/clang++`, `bin/clang-22` | C/C++ compiler; defaults to `libc++` and compiler-rt |
+| `bin/lld`, `bin/ld.lld` | ELF linker |
+| `bin/llvm-{ar,nm,objcopy,objdump,ranlib,readelf,readobj,size,strings,strip,symbolizer}` | Binary utilities |
+| `lib/clang/22/include/` | Clang resource headers |
+| `lib/clang/22/lib/linux/libclang_rt.builtins-*.a` | compiler-rt builtins |
+| `include/c++/v1/` | libc++ headers |
+| `lib/libc++.a`, `lib/libc++abi.a`, `lib/libunwind.a` | Static C++ runtime libraries |
+| `lib/libLTO.so` | Musl-linked LTO plugin |
+
+Not included: sanitizers, shared C++ libraries, clang-tools-extra, CMake
+exports, libxml2, zstd, and terminfo.
+
+## Usage
+
+Extract the archive and add its `bin` directory to `PATH`:
+
+```sh
+tar xf clang+llvm-22.1.8-aarch64-linux-musl.tar.xz
+export TOOLCHAIN="$PWD/clang+llvm-22.1.8-aarch64-linux-musl"
+export PATH="$TOOLCHAIN/bin:$PATH"
+```
+
+Compile and link C:
+
+```sh
+clang --target=aarch64-linux-musl \
+  --sysroot=/path/to/musl-sysroot \
+  hello.c -o hello
+```
+
+Compile and link C++:
+
+```sh
+clang++ --target=aarch64-linux-musl \
+  --sysroot=/path/to/musl-sysroot \
+  -cxx-isystem "$TOOLCHAIN/include/c++/v1" \
+  -L "$TOOLCHAIN/lib" \
+  hello.cpp -o hello
+```
+
+The musl sysroot must provide the target libc, startup objects, and system
+headers. The toolchain provides libc++ headers and static C++ runtime
+libraries, but does not provide musl itself.
+
+If C++ linking reports undefined `__cxa_*`, `_Unwind_*`, or vtable symbols,
+add the runtime libraries explicitly:
+
+```sh
+clang++ ... -lc++abi -lunwind hello.cpp -o hello
+```
+
+## Rust
+
+Install the Rust musl target matching the toolchain:
+
+```sh
+rustup target add aarch64-unknown-linux-musl
+```
+
+Rust's `rust-lld` is a separate linker bundled with Rust. To use this
+toolchain's zlib-enabled lld instead, configure Cargo to invoke the shipped
+`clang` driver. The driver selects the shipped `ld.lld` and also supplies the
+compiler-rt and musl link behavior.
+
+Create `.cargo/config.toml` in the Rust workspace:
+
+```toml
+[target.aarch64-unknown-linux-musl]
+linker = "/opt/clang+llvm-22.1.8-aarch64-linux-musl/bin/clang"
+rustflags = [
+  "-Clink-arg=--target=aarch64-linux-musl",
+  "-Clink-arg=--sysroot=/opt/musl/aarch64",
+]
+```
+
+Replace `/opt/clang+llvm-22.1.8-aarch64-linux-musl` and
+`/opt/musl/aarch64` with the actual toolchain and musl sysroot paths. For
+x86_64, use the corresponding values:
+
+```toml
+[target.x86_64-unknown-linux-musl]
+linker = "/opt/clang+llvm-22.1.8-x86_64-linux-musl/bin/clang"
+rustflags = [
+  "-Clink-arg=--target=x86_64-linux-musl",
+  "-Clink-arg=--sysroot=/opt/musl/x86_64",
+]
+```
+
+Build with the target explicitly selected:
+
+```sh
+cargo build --target aarch64-unknown-linux-musl
+```
+
+Use `cargo build -vv` to confirm the linker command uses the shipped
+`clang`. If the output still invokes `rust-lld`, Cargo is not using this
+configuration and compressed debug sections may produce the original zlib
+error.
+
+For crates that compile native C or C++ code through the `cc` crate, also set
+the target compiler and flags:
+
+```sh
+export CC_aarch64_unknown_linux_musl="$TOOLCHAIN/bin/clang"
+export CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-linux-musl --sysroot=/opt/musl/aarch64"
+```
