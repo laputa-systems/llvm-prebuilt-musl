@@ -1,9 +1,5 @@
-# LLVM Prebuilt (musl)
-
-Builds musl-linked LLVM/Clang release artifacts for [Laputa](https://github.com/laputa-systems/laputa).
+Builds a musl-linked LLVM/Clang toolchain for `x86_64-linux-musl`, `aarch64-linux-musl`.
 Binaries are dynamically linked against musl only — zero GNU runtime dependencies.
-
-LLVM `22.1.8`. Architectures: `x86_64`, `aarch64`. Triples: `x86_64-linux-musl`, `aarch64-linux-musl`.
 
 ## Artifact Contents
 
