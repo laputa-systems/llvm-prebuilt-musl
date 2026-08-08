@@ -1,0 +1,162 @@
+--- a/llvm/lib/Transforms/Scalar/DeadStoreElimination.cpp
++++ b/llvm/lib/Transforms/Scalar/DeadStoreElimination.cpp
+@@ -87,6 +87,7 @@
+ #include <cassert>
+ #include <cstdint>
+ #include <map>
++#include <memory>
+ #include <optional>
+ #include <utility>
+
+@@ -2198,68 +2199,99 @@
+     return {{ConditionInfo(StorePtr, StoreVal), ICmpL, ImpliedSucc}};
+   };
+
+-  auto VisitNode = [&](DomTreeNode *Node, unsigned Depth, auto &Self) -> void {
+-    if (Depth > MaxDepthRecursion)
+-      return;
+-
+-    BasicBlock *BB = Node->getBlock();
+-    // Check for redundant stores against active known conditions.
+-    if (auto *Accesses = MSSA.getBlockDefs(BB)) {
+-      for (auto &Access : make_early_inc_range(*Accesses)) {
+-        auto *Def = dyn_cast<MemoryDef>(&Access);
+-        if (!Def)
+-          continue;
+-
+-        auto *SI = dyn_cast<StoreInst>(Def->getMemoryInst());
+-        if (!SI || !SI->isUnordered())
+-          continue;
++  using DominatingCondition =
++      std::tuple<ConditionInfo, Instruction *, BasicBlock *>;
++  struct VisitFrame {
++    DomTreeNode *Node;
++    unsigned Depth;
++    SmallVector<DomTreeNode *, 4> Children;
++    unsigned NextChild = 0;
++    bool Visited = false;
++    std::optional<DominatingCondition> MaybeCondition;
++    std::unique_ptr<ScopedHTType::ScopeTy> Scope;
++
++    VisitFrame(DomTreeNode *Node, unsigned Depth,
++               std::unique_ptr<ScopedHTType::ScopeTy> Scope = nullptr)
++        : Node(Node), Depth(Depth), Scope(std::move(Scope)) {
++      for (DomTreeNode *Child : Node->children())
++        Children.push_back(Child);
++    }
++  };
+
+-        Instruction *LI = ActiveConditions.lookup(
+-            {SI->getPointerOperand(), SI->getValueOperand()});
+-        if (!LI)
+-          continue;
++  // Do a DFS walk of the dom-tree without using the C++ call stack. The
++  // dominating-condition scope for each child is owned by that child's frame
++  // and is destroyed when the frame is popped, preserving the recursive walk's
++  // backtracking behavior.
++  SmallVector<VisitFrame, 32> WorkList;
++  WorkList.emplace_back(DT.getRootNode(), 0);
++  while (!WorkList.empty()) {
++    VisitFrame &Frame = WorkList.back();
++    if (!Frame.Visited) {
++      Frame.Visited = true;
++      if (Frame.Depth > MaxDepthRecursion) {
++        WorkList.pop_back();
++        continue;
++      }
+
+-        // Found a dominating condition that may imply the value being stored.
+-        // Make sure there does not exist any clobbering access between the
+-        // load and the potential redundant store.
+-        MemoryAccess *LoadAccess = MSSA.getMemoryAccess(LI);
+-        MemoryAccess *ClobberingAccess =
+-            MSSA.getSkipSelfWalker()->getClobberingMemoryAccess(Def, BatchAA);
+-        if (MSSA.dominates(ClobberingAccess, LoadAccess)) {
+-          LLVM_DEBUG(dbgs()
+-                     << "Removing No-Op Store:\n  DEAD: " << *SI << '\n');
+-          deleteDeadInstruction(SI);
+-          NumRedundantStores++;
+-          MadeChange = true;
++      BasicBlock *BB = Frame.Node->getBlock();
++      // Check for redundant stores against active known conditions.
++      if (auto *Accesses = MSSA.getBlockDefs(BB)) {
++        for (auto &Access : make_early_inc_range(*Accesses)) {
++          auto *Def = dyn_cast<MemoryDef>(&Access);
++          if (!Def)
++            continue;
++
++          auto *SI = dyn_cast<StoreInst>(Def->getMemoryInst());
++          if (!SI || !SI->isUnordered())
++            continue;
++
++          Instruction *LI = ActiveConditions.lookup(
++              {SI->getPointerOperand(), SI->getValueOperand()});
++          if (!LI)
++            continue;
++
++          // Found a dominating condition that may imply the value being
++          // stored. Make sure there does not exist any clobbering access
++          // between the load and the potential redundant store.
++          MemoryAccess *LoadAccess = MSSA.getMemoryAccess(LI);
++          MemoryAccess *ClobberingAccess =
++              MSSA.getSkipSelfWalker()->getClobberingMemoryAccess(Def, BatchAA);
++          if (MSSA.dominates(ClobberingAccess, LoadAccess)) {
++            LLVM_DEBUG(dbgs()
++                       << "Removing No-Op Store:\n  DEAD: " << *SI << '\n');
++            deleteDeadInstruction(SI);
++            NumRedundantStores++;
++            MadeChange = true;
++          }
+         }
+       }
++
++      // See whether this basic block establishes a dominating condition.
++      Frame.MaybeCondition = GetDominatingCondition(BB);
+     }
+
+-    // See whether this basic block establishes a dominating condition.
+-    auto MaybeCondition = GetDominatingCondition(BB);
++    if (Frame.NextChild == Frame.Children.size()) {
++      WorkList.pop_back();
++      continue;
++    }
+
+-    for (DomTreeNode *Child : Node->children()) {
+-      // RAII scope for the active conditions.
+-      ScopedHTType::ScopeTy Scope(ActiveConditions);
+-      if (MaybeCondition) {
+-        const auto &[Cond, LI, ImpliedSucc] = *MaybeCondition;
+-        if (DT.dominates(BasicBlockEdge(BB, ImpliedSucc), Child->getBlock())) {
+-          // Found a condition that holds for this child, dominated by the
+-          // current node via the equality edge. Propagate the condition to
+-          // the children by pushing it onto the table.
+-          ActiveConditions.insert(Cond, LI);
+-        }
++    DomTreeNode *Child = Frame.Children[Frame.NextChild++];
++    auto Scope = std::make_unique<ScopedHTType::ScopeTy>(ActiveConditions);
++    if (Frame.MaybeCondition) {
++      const auto &[Cond, LI, ImpliedSucc] = *Frame.MaybeCondition;
++      if (DT.dominates(BasicBlockEdge(Frame.Node->getBlock(), ImpliedSucc),
++                       Child->getBlock())) {
++        // Found a condition that holds for this child, dominated by the
++        // current node via the equality edge. Propagate the condition to the
++        // children by pushing it onto the table.
++        ActiveConditions.insert(Cond, LI);
+       }
+-
+-      // Recursively visit the children of this node. Upon destruction, the no
+-      // longer active condition before visiting any sibling nodes is popped
+-      // from the active scope.
+-      Self(Child, Depth + 1, Self);
+     }
+-  };
+
+-  // Do a DFS walk of the dom-tree.
+-  VisitNode(DT.getRootNode(), 0, VisitNode);
++    // Visit the child and keep its scope active until its subtree has been
++    // exhausted, then pop it before visiting the next sibling.
++    WorkList.emplace_back(Child, Frame.Depth + 1, std::move(Scope));
++  }
+
+   return MadeChange;
+ }

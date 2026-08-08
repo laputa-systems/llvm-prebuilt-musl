@@ -26,17 +26,22 @@ LLVM source → host tools → configure → stage1 lld → stage2 (shipped) →
   stage1 runtimes can't be built with `-stdlib=libc++` (chicken-and-egg — libc++ must exist to
   build libc++). LLVM's 2-stage bootstrap can't resolve this. Static linking is the practical fix.
 - **Stage1 linker**: build same-tree `lld` before stage2 runtimes configure so `-fuse-ld=lld`
-  uses LLVM 22 `ld.lld`, not Alpine's packaged linker.
-- **Shipped defaults**: `CLANG_DEFAULT_CXX_STDLIB=libc++`, `CLANG_DEFAULT_RTLIB=compiler-rt`.
+  uses LLVM 23 `ld.lld`, not Alpine's packaged linker.
+- **Shipped defaults**: `CLANG_DEFAULT_CXX_STDLIB=libstdc++`,
+  `CLANG_DEFAULT_RTLIB=compiler-rt`, and `CLANG_DEFAULT_UNWINDLIB=libgcc`.
+  The artifact still ships libc++ headers and static runtimes for explicit use.
 - **Zlib support**: `LLVM_ENABLE_ZLIB=ON`, linked from Alpine's static `libz.a` so the artifact keeps no `libz.so` runtime dependency.
 - **Link parallelism**: `LLVM_PARALLEL_LINK_JOBS=2`.
+- **LLVM 23 DSE patch**: `patches/0001-dse-use-iterative-dominance-walk.patch` replaces
+  the recursive DSE dominator-tree walk with an explicit worklist. The stage runner
+  applies this patch before configuring the build.
 - **Build dirs**: mounted to host filesystem (Docker overlay would fill up with ~30 GB).
 
 ### Local build
 
 ```sh
 curl -fsSL -o llvm-project.tar.xz \
-  "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz"
+  "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0-rc2/llvm-project-23.1.0-rc2.src.tar.xz"
 mkdir -p llvm-project && tar -xf llvm-project.tar.xz -C llvm-project --strip-components=1
 docker build --platform linux/arm64 -f docker/alpine-llvm-musl.Dockerfile -t llvm-prebuilt-musl:alpine .
 LLVM_ARCH=aarch64 make build

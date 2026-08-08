@@ -16,6 +16,7 @@ RUN apk update && apk add --no-cache \
     git \
     lld \
     ninja \
+    patch \
     python3 \
     tar \
     xz \

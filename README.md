@@ -1,6 +1,6 @@
 # LLVM Prebuilt Musl
 
-Prebuilt LLVM/Clang 22.1.8 toolchains for `x86_64-linux-musl` and
+Prebuilt LLVM/Clang 23.1.0-rc2 toolchains for `x86_64-linux-musl` and
 `aarch64-linux-musl`. Shipped binaries are dynamically linked against musl
 with no GNU runtime dependencies. LLVM zlib support is statically linked into
 the tools, so no separate `libz.so` is required.
@@ -9,11 +9,11 @@ the tools, so no separate `libz.so` is required.
 
 | Path | What |
 |------|------|
-| `bin/clang`, `bin/clang++`, `bin/clang-22` | C/C++ compiler; defaults to `libc++` and compiler-rt |
+| `bin/clang`, `bin/clang++`, `bin/clang-23` | C/C++ compiler; defaults to Alpine `libstdc++` and compiler-rt |
 | `bin/lld`, `bin/ld.lld` | ELF linker |
 | `bin/llvm-{ar,nm,objcopy,objdump,ranlib,readelf,readobj,size,strings,strip,symbolizer}` | Binary utilities |
-| `lib/clang/22/include/` | Clang resource headers |
-| `lib/clang/22/lib/linux/libclang_rt.builtins-*.a` | compiler-rt builtins |
+| `lib/clang/23/include/` | Clang resource headers |
+| `lib/clang/23/lib/linux/libclang_rt.builtins-*.a` | compiler-rt builtins |
 | `include/c++/v1/` | libc++ headers |
 | `lib/libc++.a`, `lib/libc++abi.a`, `lib/libunwind.a` | Static C++ runtime libraries |
 | `lib/libLTO.so` | Musl-linked LTO plugin |
@@ -26,8 +26,8 @@ exports, libxml2, zstd, and terminfo.
 Extract the archive and add its `bin` directory to `PATH`:
 
 ```sh
-tar xf clang+llvm-22.1.8-aarch64-linux-musl.tar.xz
-export TOOLCHAIN="$PWD/clang+llvm-22.1.8-aarch64-linux-musl"
+tar xf clang+llvm-23.1.0-rc2-aarch64-linux-musl.tar.xz
+export TOOLCHAIN="$PWD/clang+llvm-23.1.0-rc2-aarch64-linux-musl"
 export PATH="$TOOLCHAIN/bin:$PATH"
 ```
 
@@ -44,17 +44,26 @@ Compile and link C++:
 ```sh
 clang++ --target=aarch64-linux-musl \
   --sysroot=/path/to/musl-sysroot \
+  -stdlib=libc++ \
+  --unwindlib=libunwind \
   -cxx-isystem "$TOOLCHAIN/include/c++/v1" \
   -L "$TOOLCHAIN/lib" \
+  -lc++abi -lunwind \
   hello.cpp -o hello
 ```
 
 The musl sysroot must provide the target libc, startup objects, and system
-headers. The toolchain provides libc++ headers and static C++ runtime
-libraries, but does not provide musl itself.
+headers. `clang++` defaults to the sysroot's Alpine `libstdc++`; the
+toolchain also provides libc++ headers and static C++ runtime libraries for
+explicit `-stdlib=libc++ --unwindlib=libunwind` use. It does not provide musl
+itself.
 
-If C++ linking reports undefined `__cxa_*`, `_Unwind_*`, or vtable symbols,
-add the runtime libraries explicitly:
+The LLVM 23 build applies `patches/0001-dse-use-iterative-dominance-walk.patch`.
+It replaces the recursive DSE dominator-tree walk with an explicit worklist;
+the recursive implementation can overflow the stack during Bun's ThinLTO link.
+
+For static libstdc++ links, pass `-static-libstdc++ -static-libgcc`. For
+explicit libc++ links, pass the shipped runtime libraries:
 
 ```sh
 clang++ ... -lc++abi -lunwind hello.cpp -o hello
@@ -77,20 +86,20 @@ Create `.cargo/config.toml` in the Rust workspace:
 
 ```toml
 [target.aarch64-unknown-linux-musl]
-linker = "/opt/clang+llvm-22.1.8-aarch64-linux-musl/bin/clang"
+linker = "/opt/clang+llvm-23.1.0-rc2-aarch64-linux-musl/bin/clang"
 rustflags = [
   "-Clink-arg=--target=aarch64-linux-musl",
   "-Clink-arg=--sysroot=/opt/musl/aarch64",
 ]
 ```
 
-Replace `/opt/clang+llvm-22.1.8-aarch64-linux-musl` and
+Replace `/opt/clang+llvm-23.1.0-rc2-aarch64-linux-musl` and
 `/opt/musl/aarch64` with the actual toolchain and musl sysroot paths. For
 x86_64, use the corresponding values:
 
 ```toml
 [target.x86_64-unknown-linux-musl]
-linker = "/opt/clang+llvm-22.1.8-x86_64-linux-musl/bin/clang"
+linker = "/opt/clang+llvm-23.1.0-rc2-x86_64-linux-musl/bin/clang"
 rustflags = [
   "-Clink-arg=--target=x86_64-linux-musl",
   "-Clink-arg=--sysroot=/opt/musl/x86_64",

@@ -1,4 +1,4 @@
-LLVM_VERSION ?= 22.1.8
+LLVM_VERSION ?= 23.1.0-rc2
 LLVM_ARCH     ?= $(shell uname -m | sed 's/arm64/aarch64/')
 DOCKER_TAG    := llvm-prebuilt-musl:alpine
 ifeq ($(shell uname -m),arm64)

@@ -7,6 +7,8 @@ set -euo pipefail
 
 LLVM_VERSION="${LLVM_VERSION:?LLVM_VERSION is required}"
 LLVM_ARCH="${LLVM_ARCH:?LLVM_ARCH is required (x86_64 or aarch64)}"
+CLANG_MAJOR="${LLVM_VERSION%%.*}"
+LLVM_VERSION_BASE="${LLVM_VERSION%%-*}"
 LLVM_PROJECT_DIR="${LLVM_PROJECT_DIR:-/work/llvm-project}"
 LLVM_PREBUILT_DIR="${LLVM_PREBUILT_DIR:-/work/llvm-prebuilt}"
 LLVM_HOST_BUILD_DIR="${LLVM_HOST_BUILD_DIR:-/work/llvm-host}"
@@ -75,6 +77,31 @@ done
 exec > >(tee -a "${LLVM_PREBUILT_DIR}/build-${LLVM_ARCH}.log") 2>&1
 
 echo "=== Building LLVM ${LLVM_VERSION} for ${TARGET_TRIPLE} ==="
+
+# Apply versioned local fixes before configuring any LLVM build tree. The
+# reverse dry-run makes repeated stage entrypoints safe when a prior stage
+# applied the patch but did not create its marker.
+apply_source_patches() {
+    local stamp="${LLVM_PROJECT_DIR}/.llvm-prebuilt-musl-patches-${LLVM_VERSION}"
+    [ -f "$stamp" ] && return
+
+    local patches=("${LLVM_PREBUILT_DIR}"/patches/*.patch)
+    [ -e "${patches[0]}" ] || return
+
+    for patch_file in "${patches[@]}"; do
+        if patch -d "${LLVM_PROJECT_DIR}" -p1 --dry-run --forward --batch < "$patch_file" >/dev/null; then
+            patch -d "${LLVM_PROJECT_DIR}" -p1 --forward --batch < "$patch_file"
+        elif patch -d "${LLVM_PROJECT_DIR}" -p1 --dry-run --reverse --batch < "$patch_file" >/dev/null; then
+            echo "=== Patch already applied: $(basename "$patch_file") ==="
+        else
+            die "cannot apply LLVM patch: $patch_file"
+        fi
+    done
+
+    printf 'LLVM %s patches applied\n' "$LLVM_VERSION" > "$stamp"
+}
+
+apply_source_patches
 
 # ── Stage 1: Host tools ────────────────────────────────────────────────
 
@@ -185,7 +212,8 @@ RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_SCUDO_STANDALONE_WITH_LLVM_LIBC=OFF"
 # Bootstrap: stage1 builds clang/lld with Alpine's clang, linked against
 # the host libstdc++ (not shipped).  Stage2 statically links libstdc++
 # and libgcc so they do not appear in NEEDED.  The shipped compiler still
-# defaults to libc++/compiler-rt for downstream use.
+# defaults to Alpine's libstdc++/compiler-rt for downstream use.  The
+# separately installed libc++ runtime remains available with -stdlib=libc++.
 #
 # Why not BOOTSTRAP_LLVM_ENABLE_LIBCXX=ON?  The stage1 runtime libc++.a
 # is compiled with the host compiler (Alpine clang), which emits references
@@ -207,8 +235,9 @@ STAGE2_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
 BOOTSTRAP_CMAKE_ARGS=""
 BOOTSTRAP_CMAKE_ARGS+=";-C;${LLVM_PREBUILT_DIR}/cmake/llvm-musl-distribution.cmake"
 BOOTSTRAP_CMAKE_ARGS+=";-Wno-dev"
-BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_CXX_STDLIB=libc++"
+BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_CXX_STDLIB=libstdc++"
 BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_RTLIB=compiler-rt"
+BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_UNWINDLIB=libgcc"
 BOOTSTRAP_CMAKE_ARGS+=";-DLLVM_PARALLEL_LINK_JOBS=${LLVM_PARALLEL_LINK_JOBS}"
 BOOTSTRAP_CMAKE_ARGS+=";-DCMAKE_EXE_LINKER_FLAGS=${STAGE2_LINKER_FLAGS}"
 BOOTSTRAP_CMAKE_ARGS+=";-DCMAKE_SHARED_LINKER_FLAGS=${STAGE2_LINKER_FLAGS}"
@@ -265,6 +294,8 @@ require_file "${LLVM_BUILD_DIR}/CMakeCache.txt" "target CMake cache"
 require_file "${LLVM_BUILD_DIR}/build.ninja" "target build graph"
 grep -q "^LLVM_DEFAULT_TARGET_TRIPLE:.*=${TARGET_TRIPLE}$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
     die "target CMake cache does not contain LLVM_DEFAULT_TARGET_TRIPLE=${TARGET_TRIPLE}"
+grep -q "^LLVM_VERSION:FILEPATH=${LLVM_VERSION}$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
+    die "target CMake cache is not LLVM ${LLVM_VERSION}; move the stale build directory and rerun"
 grep -q "^CLANG_ENABLE_BOOTSTRAP:.*=ON$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
     die "target CMake cache does not have CLANG_ENABLE_BOOTSTRAP=ON"
 grep -q "^LLVM_ENABLE_ZLIB:.*=ON$" "${LLVM_BUILD_DIR}/CMakeCache.txt" ||
@@ -288,7 +319,7 @@ if [ ! -e "${LLVM_BUILD_DIR}/bin/ld.lld" ]; then
 fi
 require_executable "${LLVM_BUILD_DIR}/bin/lld" "stage1 lld"
 require_executable "${LLVM_BUILD_DIR}/bin/ld.lld" "stage1 ld.lld"
-"${LLVM_BUILD_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION}" ||
+"${LLVM_BUILD_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION_BASE}" ||
     die "stage1 ld.lld version is not ${LLVM_VERSION}"
 printf 'int main(void) { return 0; }\n' |
     clang -x c - -fuse-ld="${LLVM_BUILD_DIR}/bin/ld.lld" -o "${LLVM_BUILD_DIR}/stage1-lld-link-check" ||
@@ -312,7 +343,7 @@ require_executable "${STAGE2_BINS_DIR}/bin/lld" "stage2 lld"
 require_executable "${STAGE2_BINS_DIR}/bin/ld.lld" "stage2 ld.lld"
 "${STAGE2_BINS_DIR}/bin/clang" --version | grep -q "clang version ${LLVM_VERSION}" ||
     die "stage2 clang version is not ${LLVM_VERSION}"
-"${STAGE2_BINS_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION}" ||
+"${STAGE2_BINS_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION_BASE}" ||
     die "stage2 ld.lld version is not ${LLVM_VERSION}"
 finish_stage stage2
 
@@ -323,7 +354,6 @@ cmake --build "${LLVM_BUILD_DIR}/tools/clang/stage2-bins" --target install-distr
 # install from stage2 doesn't include compiler-rt components, so copy
 # builtins from the stage2 build tree into the install tree.
 
-CLANG_MAJOR="${LLVM_VERSION%%.*}"
 RESOURCE_DIR="${CMAKE_INSTALL_PREFIX}/lib/clang/${CLANG_MAJOR}"
 BUILTINS_DIR="${RESOURCE_DIR}/lib/linux"
 mkdir -p "${BUILTINS_DIR}"
@@ -422,17 +452,14 @@ for lib in libc++.a libc++abi.a libunwind.a libc++experimental.a; do
 done
 
 # ── Clang driver config ───────────────────────────────────────────────
-# The clang driver does not auto-append -lc++abi -lunwind when targeting
-# musl triples.  A config file placed next to the clang++ binary is
-# loaded automatically and injects these flags.  We also set -fuse-ld=lld
-# so the shipped compiler defaults to lld (included in the toolchain),
-# which handles the link ordering correctly with the injected flags.
+# Set -fuse-ld=lld so the shipped compiler defaults to the linker included
+# in the toolchain.  The default C++ runtime is Alpine's libstdc++, while
+# libc++ remains available for callers that pass -stdlib=libc++ and the
+# shipped runtime libraries explicitly.
 cat > "${CMAKE_INSTALL_PREFIX}/bin/clang++.cfg" <<'EOF'
 -fuse-ld=lld
--lc++abi
--lunwind
 EOF
-echo "Created clang++.cfg (auto-injects -fuse-ld=lld -lc++abi -lunwind)"
+echo "Created clang++.cfg (auto-injects -fuse-ld=lld)"
 
 # clang (C) also defaults to lld for consistency.
 cat > "${CMAKE_INSTALL_PREFIX}/bin/clang.cfg" <<'EOF'
@@ -441,7 +468,7 @@ EOF
 echo "Created clang.cfg (auto-injects -fuse-ld=lld)"
 
 echo "=== Stage 4: Validating install layout ==="
-for tool in clang clang++ clang-22 lld ld.lld llvm-ar llvm-nm llvm-readobj; do
+for tool in clang clang-${CLANG_MAJOR} clang++ lld ld.lld llvm-ar llvm-nm llvm-readobj; do
     require_executable "${CMAKE_INSTALL_PREFIX}/bin/${tool}" "installed tool"
 done
 require_file "${CMAKE_INSTALL_PREFIX}/bin/clang.cfg" "clang driver config"
@@ -467,7 +494,7 @@ validate() {
     echo "Target triple: ${target_triple}"
 
     local tools=(
-        bin/clang bin/clang-22 bin/clang++ bin/lld bin/ld.lld
+        bin/clang bin/clang-${CLANG_MAJOR} bin/clang++ bin/lld bin/ld.lld
         bin/llvm-ar bin/llvm-nm bin/llvm-objcopy bin/llvm-objdump
         bin/llvm-ranlib bin/llvm-readelf bin/llvm-readobj
         bin/llvm-size bin/llvm-strings bin/llvm-strip bin/llvm-symbolizer
@@ -482,7 +509,7 @@ validate() {
 
     echo ""
     echo "--- ELF linkage ---"
-    local bins=(bin/clang bin/clang-22 bin/clang++ bin/lld bin/ld.lld
+    local bins=(bin/clang bin/clang-${CLANG_MAJOR} bin/clang++ bin/lld bin/ld.lld
                 bin/llvm-ar bin/llvm-nm bin/llvm-objcopy bin/llvm-objdump
                 bin/llvm-ranlib bin/llvm-readelf bin/llvm-readobj
                 bin/llvm-size bin/llvm-strings bin/llvm-strip bin/llvm-symbolizer)
@@ -636,7 +663,7 @@ CEOF
         fail "clang: compile C"
     fi
 
-    # clang++: compile C++
+    # clang++: compile C++ with the shipped libc++ headers.
     # --sysroot=/ makes clang search only the system root for headers,
     # hiding libc++ headers installed at the toolchain prefix.  We add
     # -cxx-isystem to explicitly point at the installed libc++ headers.
@@ -645,20 +672,24 @@ CEOF
 int main() { std::cout << "hello from clang++\n"; return 0; }
 CEOF
     if "$clangxx" --target="$target_triple" --sysroot=/ \
+         -stdlib=libc++ \
+         --unwindlib=libunwind \
          -cxx-isystem "${install_dir}/include/c++/v1" \
          -c "$workd/hello.cpp" -o "$workd/hello_cpp.o" 2>/dev/null; then
-        pass "clang++: compile C++"
+        pass "clang++: compile C++ with libc++"
     else
         fail "clang++: compile C++"
     fi
 
-    # clang++: default stdlib is libc++ (no explicit -stdlib flag needed)
+    # clang++: default stdlib is Alpine's libstdc++.  Compile and inspect a
+    # link-only invocation so this checks the driver's default, rather than
+    # accidentally selecting libc++ through the installed headers.
     if "$clangxx" --target="$target_triple" --sysroot=/ \
-         -cxx-isystem "${install_dir}/include/c++/v1" \
-         -c "$workd/hello.cpp" -o "$workd/hello_cpp_default.o" 2>/dev/null; then
-        pass "clang++: default stdlib is libc++"
+         -### "$workd/hello.cpp" -o "$workd/hello_cpp_default" 2>&1 |
+         grep -q -- '-lstdc++'; then
+        pass "clang++: default stdlib is libstdc++"
     else
-        fail "clang++: default stdlib not libc++"
+        fail "clang++: default stdlib not libstdc++"
     fi
 
     # clang++: C++ exceptions work
@@ -671,8 +702,11 @@ int main() {
 }
 CEOF
     if "$clangxx" --target="$target_triple" --sysroot=/ \
+         -stdlib=libc++ \
+         --unwindlib=libunwind \
          -cxx-isystem "${install_dir}/include/c++/v1" \
          -L "${install_dir}/lib" \
+         -lc++abi -lunwind \
          "$workd/except.cpp" -o "$workd/except" 2>/dev/null &&
        [ -x "$workd/except" ] && "$workd/except" 2>/dev/null; then
         pass "clang++: exceptions work"
@@ -686,6 +720,8 @@ thread_local int x = 42;
 int main() { return x != 42; }
 CEOF
     if "$clangxx" --target="$target_triple" --sysroot=/ \
+         -stdlib=libc++ \
+         --unwindlib=libunwind \
          -cxx-isystem "${install_dir}/include/c++/v1" \
          -L "${install_dir}/lib" \
          "$workd/tls.cpp" -o "$workd/tls" 2>/dev/null &&
@@ -814,11 +850,14 @@ CEOF
     # even with --sysroot=/ (which would otherwise hide them).
     # -L points at the install tree lib/ so lld can find libc++.a/libc++abi.a
     # (sysroot only has musl libc).
-    # -fuse-ld=lld and -lc++abi -lunwind come from clang++.cfg (installed
-    # next to the binary) so they are not repeated here.
+    # -fuse-ld=lld comes from clang++.cfg.  libc++'s ABI and unwind archives
+    # are explicit because the default driver runtime is libstdc++.
     if "$clangxx" --target="$target_triple" --sysroot=/ \
+         -stdlib=libc++ \
+         --unwindlib=libunwind \
          -cxx-isystem "${install_dir}/include/c++/v1" \
          -L "${install_dir}/lib" \
+         -lc++abi -lunwind \
          "$workd/hello.cpp" -o "$workd/hello_cpp" 2>/dev/null &&
        [ -x "$workd/hello_cpp" ]; then
         local cpp_interp
