@@ -61,6 +61,8 @@ itself.
 The LLVM 23 build applies `patches/0001-llvm23-dse-use-iterative-dominance-walk.patch`.
 It replaces the recursive DSE dominator-tree walk with an explicit worklist;
 the recursive implementation can overflow the stack during Bun's ThinLTO link.
+See [`patches/README.md`](patches/README.md) for the patch history, upstream
+references, and retained LLVM 22 reproductions.
 
 The LLVM 22.1.8 build also applies
 `patches/0002-llvm22-instcombine-recognize-non-negative-subtraction-patterns.patch`.
