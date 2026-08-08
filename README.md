@@ -1,25 +1,27 @@
 # LLVM Prebuilt Musl
 
 Prebuilt LLVM/Clang 23.1.0-rc2 toolchains for `x86_64-linux-musl` and
-`aarch64-linux-musl`. Shipped binaries are dynamically linked against musl
-with no GNU runtime dependencies. LLVM zlib support is statically linked into
-the tools, so no separate `libz.so` is required.
+`aarch64-linux-musl`. Shipped binaries and shared libraries are dynamically
+linked against musl with no GNU runtime dependencies. LLVM zlib support is
+statically linked into the tools, so no separate `libz.so` is required.
 
 ## Artifact Contents
 
 | Path | What |
 |------|------|
-| `bin/clang`, `bin/clang++`, `bin/clang-23` | C/C++ compiler; defaults to Alpine `libstdc++` and compiler-rt |
+| `bin/clang`, `bin/clang++`, `bin/clang-23` | C/C++ compiler; defaults to bundled libc++, libunwind, and compiler-rt |
 | `bin/lld`, `bin/ld.lld` | ELF linker |
 | `bin/llvm-{ar,nm,objcopy,objdump,ranlib,readelf,readobj,size,strings,strip,symbolizer}` | Binary utilities |
+| `lib/libclang.so` | Musl-linked libclang C API library |
+| `include/clang-c/` | libclang C API headers |
 | `lib/clang/23/include/` | Clang resource headers |
 | `lib/clang/23/lib/linux/libclang_rt.builtins-*.a` | compiler-rt builtins |
 | `include/c++/v1/` | libc++ headers |
 | `lib/libc++.a`, `lib/libc++abi.a`, `lib/libunwind.a` | Static C++ runtime libraries |
 | `lib/libLTO.so` | Musl-linked LTO plugin |
 
-Not included: sanitizers, shared C++ libraries, clang-tools-extra, CMake
-exports, libxml2, zstd, and terminfo.
+Not included: musl itself or a target sysroot, sanitizers, shared C++ libraries,
+clang-tools-extra, CMake exports, libxml2, zstd, and terminfo.
 
 ## Usage
 
@@ -53,10 +55,16 @@ clang++ --target=aarch64-linux-musl \
 ```
 
 The musl sysroot must provide the target libc, startup objects, and system
-headers. `clang++` defaults to the sysroot's Alpine `libstdc++`; the
-toolchain also provides libc++ headers and static C++ runtime libraries for
-explicit `-stdlib=libc++ --unwindlib=libunwind` use. It does not provide musl
-itself.
+headers. `clang++` defaults to the bundled libc++/libunwind/compiler-rt stack;
+the explicit options above make the link contract clear and select the shipped
+static C++ runtime libraries. The toolchain does not provide musl itself.
+
+For tools that use libclang through bindgen or another C API client, point the
+loader at the bundled library:
+
+```sh
+export LIBCLANG_PATH="$TOOLCHAIN/lib"
+```
 
 The LLVM 23 build applies `patches/0001-llvm23-dse-use-iterative-dominance-walk.patch`.
 It replaces the recursive DSE dominator-tree walk with an explicit worklist;
@@ -81,8 +89,9 @@ The reduced control input is retained at
 `ulimit -s 250; opt -passes=loop-unroll -disable-output repros/llvm22-scev-phi-range-recursion.ll`
 exits with SIGSEGV, while the patched tool exits successfully.
 
-For static libstdc++ links, pass `-static-libstdc++ -static-libgcc`. For
-explicit libc++ links, pass the shipped runtime libraries:
+For callers that intentionally use libstdc++, pass
+`-stdlib=libstdc++ -static-libstdc++ -static-libgcc`. For explicit libc++
+links, pass the shipped runtime libraries:
 
 ```sh
 clang++ ... -lc++abi -lunwind hello.cpp -o hello

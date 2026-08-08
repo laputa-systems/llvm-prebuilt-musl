@@ -27,10 +27,14 @@ LLVM source → host tools → configure → stage1 lld → stage2 (shipped) →
   build libc++). LLVM's 2-stage bootstrap can't resolve this. Static linking is the practical fix.
 - **Stage1 linker**: build same-tree `lld` before stage2 runtimes configure so `-fuse-ld=lld`
   uses LLVM 23 `ld.lld`, not Alpine's packaged linker.
-- **Shipped defaults**: `CLANG_DEFAULT_CXX_STDLIB=libstdc++`,
-  `CLANG_DEFAULT_RTLIB=compiler-rt`, and `CLANG_DEFAULT_UNWINDLIB=libgcc`.
-  The artifact still ships libc++ headers and static runtimes for explicit use.
+- **Shipped defaults**: `CLANG_DEFAULT_CXX_STDLIB=libc++`,
+  `CLANG_DEFAULT_RTLIB=compiler-rt`, and `CLANG_DEFAULT_UNWINDLIB=libunwind`.
+  The artifact ships libc++ headers, static runtimes, and the musl-linked
+  `libclang.so` C API library.
 - **Zlib support**: `LLVM_ENABLE_ZLIB=ON`, linked from Alpine's static `libz.a` so the artifact keeps no `libz.so` runtime dependency.
+- **Alpine boundary**: Alpine packages are build inputs only. The shipped artifact
+  requires the target musl runtime and a target sysroot for libc headers/startup
+  objects, but not Alpine's libclang, libstdc++, libgcc, or zlib libraries.
 - **Link parallelism**: `LLVM_PARALLEL_LINK_JOBS=2`.
 - **LLVM 23 DSE patch**: `patches/0001-llvm23-dse-use-iterative-dominance-walk.patch` replaces
   the recursive DSE dominator-tree walk with an explicit worklist. The stage runner
@@ -81,10 +85,11 @@ CI restores caches before the build and saves them at useful boundaries:
 
 ## Validation
 
-Runs inline during `scripts/stages/install-validate.sh`. Current coverage is 81 checks across:
+Runs inline during `scripts/stages/install-validate.sh`. Current coverage spans:
 
-- ELF linkage — every binary + libLTO.so: musl interpreter, musl-only NEEDED
-- Artifact presence — all tools, headers, libraries present; no sanitizers
-- Tool exercise — compile C, compile C++, default stdlib, exceptions, TLS, nm,
+- ELF linkage — every binary + libLTO.so + libclang.so: musl interpreter,
+  musl-only NEEDED
+- Artifact presence — all tools, libclang C API headers, libraries present; no sanitizers
+- Tool exercise — compile C, compile C++, default libc++ stdlib, exceptions, TLS, nm,
   readelf, readobj, objdump, objcopy, zlib debug-section compression, strip,
   ar+ranlib, lld (C + C++ link), strings, size, symbolizer, runtime execution

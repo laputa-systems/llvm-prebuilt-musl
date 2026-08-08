@@ -231,10 +231,9 @@ RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_CTX_PROFILE=OFF"
 RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_XRAY_NO_PREINIT=OFF"
 RUNTIMES_CMAKE_ARGS+=";-DCOMPILER_RT_BUILD_SCUDO_STANDALONE_WITH_LLVM_LIBC=OFF"
 # Bootstrap: stage1 builds clang/lld with Alpine's clang, linked against
-# the host libstdc++ (not shipped).  Stage2 statically links libstdc++
-# and libgcc so they do not appear in NEEDED.  The shipped compiler still
-# defaults to Alpine's libstdc++/compiler-rt for downstream use.  The
-# separately installed libc++ runtime remains available with -stdlib=libc++.
+# the host libstdc++ (not shipped). Stage2 statically links libstdc++ and
+# libgcc so they do not appear in NEEDED. The shipped compiler defaults to
+# the bundled libc++/libunwind/compiler-rt stack for downstream use.
 #
 # Why not BOOTSTRAP_LLVM_ENABLE_LIBCXX=ON?  The stage1 runtime libc++.a
 # is compiled with the host compiler (Alpine clang), which emits references
@@ -256,9 +255,9 @@ STAGE2_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
 BOOTSTRAP_CMAKE_ARGS=""
 BOOTSTRAP_CMAKE_ARGS+=";-C;${LLVM_PREBUILT_DIR}/cmake/llvm-musl-distribution.cmake"
 BOOTSTRAP_CMAKE_ARGS+=";-Wno-dev"
-BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_CXX_STDLIB=libstdc++"
+BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_CXX_STDLIB=libc++"
 BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_RTLIB=compiler-rt"
-BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_UNWINDLIB=libgcc"
+BOOTSTRAP_CMAKE_ARGS+=";-DCLANG_DEFAULT_UNWINDLIB=libunwind"
 BOOTSTRAP_CMAKE_ARGS+=";-DLLVM_PARALLEL_LINK_JOBS=${LLVM_PARALLEL_LINK_JOBS}"
 BOOTSTRAP_CMAKE_ARGS+=";-DCMAKE_EXE_LINKER_FLAGS=${STAGE2_LINKER_FLAGS}"
 BOOTSTRAP_CMAKE_ARGS+=";-DCMAKE_SHARED_LINKER_FLAGS=${STAGE2_LINKER_FLAGS}"
@@ -474,9 +473,8 @@ done
 
 # ── Clang driver config ───────────────────────────────────────────────
 # Set -fuse-ld=lld so the shipped compiler defaults to the linker included
-# in the toolchain.  The default C++ runtime is Alpine's libstdc++, while
-# libc++ remains available for callers that pass -stdlib=libc++ and the
-# shipped runtime libraries explicitly.
+# in the toolchain. The default C++ runtime is the bundled libc++/libunwind;
+# the shipped runtime libraries remain available for explicit linker control.
 cat > "${CMAKE_INSTALL_PREFIX}/bin/clang++.cfg" <<'EOF'
 -fuse-ld=lld
 EOF
@@ -494,6 +492,8 @@ for tool in clang clang-${CLANG_MAJOR} clang++ lld ld.lld llvm-ar llvm-nm llvm-r
 done
 require_file "${CMAKE_INSTALL_PREFIX}/bin/clang.cfg" "clang driver config"
 require_file "${CMAKE_INSTALL_PREFIX}/bin/clang++.cfg" "clang++ driver config"
+require_file "${CMAKE_INSTALL_PREFIX}/lib/libclang.so" "libclang shared library"
+require_file "${CMAKE_INSTALL_PREFIX}/include/clang-c/Index.h" "libclang C API headers"
 require_dir "${CMAKE_INSTALL_PREFIX}/lib/clang/${CLANG_MAJOR}/include" "clang resource headers"
 require_file "${CMAKE_INSTALL_PREFIX}/lib/clang/${CLANG_MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a" "compiler-rt builtins"
 require_file "${CMAKE_INSTALL_PREFIX}/include/c++/v1/__config_site" "libc++ __config_site"
@@ -576,31 +576,40 @@ validate() {
         fi
     done
 
+    validate_shared_library() {
+        local relative="$1"
+        local path="${install_dir}/${relative}" name="${relative##*/}"
+        if [ ! -f "$path" ]; then
+            fail "${name} missing"
+            return
+        fi
+
+        pass "${name} present"
+        local interp
+        interp=$(readelf -l "$path" 2>/dev/null | grep 'Requesting program interpreter' || true)
+        if echo "$interp" | grep -q 'ld-linux'; then
+            fail "${name}: glibc interpreter"
+        elif echo "$interp" | grep -q 'ld-musl'; then
+            pass "${name}: musl interpreter"
+        else
+            pass "${name}: static (no interpreter)"
+        fi
+
+        local needed
+        needed=$(readelf -d "$path" 2>/dev/null | grep NEEDED || true)
+        if echo "$needed" | grep -qE 'libc\.so\.6|libgcc_s|libstdc\+\+|libunwind|libz\.so'; then
+            fail "${name}: unexpected glibc/libz/GNU runtime in NEEDED"
+        elif echo "$needed" | grep -q 'libc\.musl'; then
+            pass "${name}: musl-linked"
+        else
+            pass "${name}: static (no NEEDED)"
+        fi
+    }
+
     echo ""
-    local lto_lib="${install_dir}/lib/libLTO.so"
-    if [ -f "$lto_lib" ]; then
-        pass "libLTO.so present"
-        local lto_interp
-        lto_interp=$(readelf -l "$lto_lib" 2>/dev/null | grep 'Requesting program interpreter' || true)
-        if echo "$lto_interp" | grep -q 'ld-linux'; then
-            fail "libLTO.so: glibc interpreter"
-        elif echo "$lto_interp" | grep -q 'ld-musl'; then
-            pass "libLTO.so: musl interpreter"
-        else
-            pass "libLTO.so: static (no interpreter)"
-        fi
-        local lto_needed
-        lto_needed=$(readelf -d "$lto_lib" 2>/dev/null | grep NEEDED || true)
-        if echo "$lto_needed" | grep -qE 'libc\.so\.6|libgcc_s|libstdc\+\+|libunwind|libz\.so'; then
-            fail "libLTO.so: unexpected glibc/libz/GNU runtime in NEEDED"
-        elif echo "$lto_needed" | grep -q 'libc\.musl'; then
-            pass "libLTO.so: musl-linked"
-        else
-            pass "libLTO.so: static (no NEEDED)"
-        fi
-    else
-        fail "libLTO.so missing"
-    fi
+    echo "--- Shared libraries ---"
+    validate_shared_library lib/libLTO.so
+    validate_shared_library lib/libclang.so
 
     echo ""
     echo "--- Resource headers ---"
@@ -609,6 +618,14 @@ validate() {
         pass "resource headers present ($(find "$headers_dir" -name '*.h' | wc -l) headers)"
     else
         fail "resource headers missing: ${headers_dir}"
+    fi
+
+    echo ""
+    echo "--- libclang headers ---"
+    if [ -f "${install_dir}/include/clang-c/Index.h" ]; then
+        pass "libclang C API headers present"
+    else
+        fail "libclang C API headers missing"
     fi
 
     echo ""
@@ -702,15 +719,17 @@ CEOF
         fail "clang++: compile C++"
     fi
 
-    # clang++: default stdlib is Alpine's libstdc++.  Compile and inspect a
-    # link-only invocation so this checks the driver's default, rather than
-    # accidentally selecting libc++ through the installed headers.
+    # clang++: default stdlib is the shipped libc++. Compile and inspect a
+    # link-only invocation so this checks the driver's default.
     if "$clangxx" --target="$target_triple" --sysroot=/ \
          -### "$workd/hello.cpp" -o "$workd/hello_cpp_default" 2>&1 |
-         grep -q -- '-lstdc++'; then
-        pass "clang++: default stdlib is libstdc++"
+         grep -q -- '-lc++' &&
+       "$clangxx" --target="$target_triple" --sysroot=/ \
+         -### "$workd/hello.cpp" -o "$workd/hello_cpp_default" 2>&1 |
+         grep -q -- '-lunwind'; then
+        pass "clang++: default stdlib is libc++ with libunwind"
     else
-        fail "clang++: default stdlib not libstdc++"
+        fail "clang++: default stdlib is not bundled libc++ with libunwind"
     fi
 
     # clang++: C++ exceptions work
@@ -839,7 +858,10 @@ CEOF
 
     # lld: link an executable (we need a linked binary for llvm-strings)
     # -fuse-ld=lld comes from clang.cfg, not needed on command line.
+    # The shipped default unwind runtime is libunwind, so expose the bundled
+    # archive directory explicitly just as a consumer link must do.
     if "$clang" --target="$target_triple" --sysroot=/ -g \
+         -L "${install_dir}/lib" \
          "$workd/hello.c" -o "$workd/hello" 2>/dev/null &&
        [ -x "$workd/hello" ]; then
         pass "ld.lld: linked executable via clang (lld from clang.cfg)"
@@ -871,8 +893,8 @@ CEOF
     # even with --sysroot=/ (which would otherwise hide them).
     # -L points at the install tree lib/ so lld can find libc++.a/libc++abi.a
     # (sysroot only has musl libc).
-    # -fuse-ld=lld comes from clang++.cfg.  libc++'s ABI and unwind archives
-    # are explicit because the default driver runtime is libstdc++.
+    # -fuse-ld=lld comes from clang++.cfg. libc++'s ABI and unwind archives
+    # are explicit so this test uses the shipped static runtime libraries.
     if "$clangxx" --target="$target_triple" --sysroot=/ \
          -stdlib=libc++ \
          --unwindlib=libunwind \

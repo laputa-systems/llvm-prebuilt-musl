@@ -66,9 +66,11 @@ set(COMPILER_RT_BUILD_CTX_PROFILE OFF CACHE BOOL "" FORCE)
 set(COMPILER_RT_BUILD_XRAY_NO_PREINIT OFF CACHE BOOL "" FORCE)
 set(COMPILER_RT_BUILD_SCUDO_STANDALONE_WITH_LLVM_LIBC OFF CACHE BOOL "" FORCE)
 
-# ── Distribution: tools only, no development libs/headers/exports ────
+# ── Distribution: tools, libclang, and the headers needed to use them ──
 set(LLVM_DISTRIBUTION_COMPONENTS
     clang
+    libclang
+    libclang-headers
     clang-resource-headers
     lld
     LTO
