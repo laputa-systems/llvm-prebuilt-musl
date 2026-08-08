@@ -58,9 +58,26 @@ toolchain also provides libc++ headers and static C++ runtime libraries for
 explicit `-stdlib=libc++ --unwindlib=libunwind` use. It does not provide musl
 itself.
 
-The LLVM 23 build applies `patches/0001-dse-use-iterative-dominance-walk.patch`.
+The LLVM 23 build applies `patches/0001-llvm23-dse-use-iterative-dominance-walk.patch`.
 It replaces the recursive DSE dominator-tree walk with an explicit worklist;
 the recursive implementation can overflow the stack during Bun's ThinLTO link.
+
+The LLVM 22.1.8 build also applies
+`patches/0002-llvm22-instcombine-recognize-non-negative-subtraction-patterns.patch`.
+This is the upstream `computeKnownBitsAddSub` improvement and carries its
+minimal InstCombine regression test. Patch filenames containing `-llvm22-` or
+`-llvm23-` are applied only to the matching LLVM major version.
+The standalone one-function input is retained at
+`repros/llvm22-compute-known-bits-addsub.ll`.
+
+It also applies
+`patches/0003-llvm22-scev-limit-getrangeref-phi-recursion.patch`. This ports the
+upstream ScalarEvolution PHI-range recursion fix for issue #148253, which can
+otherwise exhaust the stack while ThinLTO runs loop unrolling.
+The reduced control input is retained at
+`repros/llvm22-scev-phi-range-recursion.ll`; with an unpatched LLVM 22 `opt`,
+`ulimit -s 250; opt -passes=loop-unroll -disable-output repros/llvm22-scev-phi-range-recursion.ll`
+exits with SIGSEGV, while the patched tool exits successfully.
 
 For static libstdc++ links, pass `-static-libstdc++ -static-libgcc`. For
 explicit libc++ links, pass the shipped runtime libraries:

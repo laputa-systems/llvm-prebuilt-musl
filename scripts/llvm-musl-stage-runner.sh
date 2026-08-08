@@ -83,12 +83,33 @@ echo "=== Building LLVM ${LLVM_VERSION} for ${TARGET_TRIPLE} ==="
 # applied the patch but did not create its marker.
 apply_source_patches() {
     local stamp="${LLVM_PROJECT_DIR}/.llvm-prebuilt-musl-patches-${LLVM_VERSION}"
-    [ -f "$stamp" ] && return
-
     local patches=("${LLVM_PREBUILT_DIR}"/patches/*.patch)
     [ -e "${patches[0]}" ] || return
 
+    local expected_stamp
+    expected_stamp=$(
+        printf 'LLVM %s patches applied\n' "$LLVM_VERSION"
+        for patch_file in "${patches[@]}"; do
+            case "$(basename "$patch_file")" in
+                *-llvm22-*) [ "$CLANG_MAJOR" = "22" ] || continue ;;
+                *-llvm23-*) [ "$CLANG_MAJOR" = "23" ] || continue ;;
+            esac
+            sha256sum "$patch_file"
+        done
+    )
+    if [ -f "$stamp" ] && cmp -s <(printf '%s\n' "$expected_stamp") "$stamp"; then
+        return
+    fi
+
     for patch_file in "${patches[@]}"; do
+        case "$(basename "$patch_file")" in
+            *-llvm22-*)
+                [ "$CLANG_MAJOR" = "22" ] || continue
+                ;;
+            *-llvm23-*)
+                [ "$CLANG_MAJOR" = "23" ] || continue
+                ;;
+        esac
         if patch -d "${LLVM_PROJECT_DIR}" -p1 --dry-run --forward --batch < "$patch_file" >/dev/null; then
             patch -d "${LLVM_PROJECT_DIR}" -p1 --forward --batch < "$patch_file"
         elif patch -d "${LLVM_PROJECT_DIR}" -p1 --dry-run --reverse --batch < "$patch_file" >/dev/null; then
@@ -98,7 +119,7 @@ apply_source_patches() {
         fi
     done
 
-    printf 'LLVM %s patches applied\n' "$LLVM_VERSION" > "$stamp"
+    printf '%s\n' "$expected_stamp" > "$stamp"
 }
 
 apply_source_patches

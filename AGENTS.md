@@ -32,9 +32,18 @@ LLVM source → host tools → configure → stage1 lld → stage2 (shipped) →
   The artifact still ships libc++ headers and static runtimes for explicit use.
 - **Zlib support**: `LLVM_ENABLE_ZLIB=ON`, linked from Alpine's static `libz.a` so the artifact keeps no `libz.so` runtime dependency.
 - **Link parallelism**: `LLVM_PARALLEL_LINK_JOBS=2`.
-- **LLVM 23 DSE patch**: `patches/0001-dse-use-iterative-dominance-walk.patch` replaces
+- **LLVM 23 DSE patch**: `patches/0001-llvm23-dse-use-iterative-dominance-walk.patch` replaces
   the recursive DSE dominator-tree walk with an explicit worklist. The stage runner
   applies this patch before configuring the build.
+- **LLVM 22 `computeKnownBitsAddSub` patch**:
+  `patches/0002-llvm22-instcombine-recognize-non-negative-subtraction-patterns.patch`
+  backports the upstream non-negative `smin` subtraction improvement and its
+  minimal regression test. Version-qualified patch filenames are filtered by
+  the stage runner.
+- **LLVM 22 ScalarEvolution recursion patch**:
+  `patches/0003-llvm22-scev-limit-getrangeref-phi-recursion.patch` ports the
+  upstream PHI-range recursion limit from issue #148253. It prevents
+  `getRangeRef`/`createSCEV` stack exhaustion during loop unrolling and ThinLTO.
 - **Build dirs**: mounted to host filesystem (Docker overlay would fill up with ~30 GB).
 
 ### Local build
