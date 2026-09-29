@@ -1,6 +1,6 @@
 # LLVM Prebuilt Musl
 
-Prebuilt LLVM/Clang 23.1.0-rc2 toolchains for `x86_64-linux-musl` and
+Prebuilt LLVM/Clang 23.1.2 toolchains for `x86_64-linux-musl` and
 `aarch64-linux-musl`. Shipped binaries and shared libraries are dynamically
 linked against musl with no GNU runtime dependencies. LLVM zlib support is
 statically linked into the tools, so no separate `libz.so` is required.
@@ -28,8 +28,8 @@ clang-tools-extra, CMake exports, libxml2, zstd, and terminfo.
 Extract the archive and add its `bin` directory to `PATH`:
 
 ```sh
-tar xf clang+llvm-23.1.0-rc2-aarch64-linux-musl.tar.xz
-export TOOLCHAIN="$PWD/clang+llvm-23.1.0-rc2-aarch64-linux-musl"
+tar xf clang+llvm-23.1.2-aarch64-linux-musl.tar.xz
+export TOOLCHAIN="$PWD/clang+llvm-23.1.2-aarch64-linux-musl"
 export PATH="$TOOLCHAIN/bin:$PATH"
 ```
 
@@ -66,28 +66,10 @@ loader at the bundled library:
 export LIBCLANG_PATH="$TOOLCHAIN/lib"
 ```
 
-The LLVM 23 build applies `patches/0001-llvm23-dse-use-iterative-dominance-walk.patch`.
-It replaces the recursive DSE dominator-tree walk with an explicit worklist;
-the recursive implementation can overflow the stack during Bun's ThinLTO link.
-See [`patches/README.md`](patches/README.md) for the patch history, upstream
-references, and retained LLVM 22 reproductions.
-
-The LLVM 22.1.8 build also applies
-`patches/0002-llvm22-instcombine-recognize-non-negative-subtraction-patterns.patch`.
-This is the upstream `computeKnownBitsAddSub` improvement and carries its
-minimal InstCombine regression test. Patch filenames containing `-llvm22-` or
-`-llvm23-` are applied only to the matching LLVM major version.
-The standalone one-function input is retained at
-`repros/llvm22-compute-known-bits-addsub.ll`.
-
-It also applies
-`patches/0003-llvm22-scev-limit-getrangeref-phi-recursion.patch`. This ports the
-upstream ScalarEvolution PHI-range recursion fix for issue #148253, which can
-otherwise exhaust the stack while ThinLTO runs loop unrolling.
-The reduced control input is retained at
-`repros/llvm22-scev-phi-range-recursion.ll`; with an unpatched LLVM 22 `opt`,
-`ulimit -s 250; opt -passes=loop-unroll -disable-output repros/llvm22-scev-phi-range-recursion.ll`
-exits with SIGSEGV, while the patched tool exits successfully.
+The build applies one local LLVM patch: an iterative rewrite of the Dead Store
+Elimination dominator-tree walk, which can otherwise overflow the stack on very
+deep dominator trees. See [`patches/README.md`](patches/README.md) for its
+rationale, upstream status, and regression tests.
 
 For callers that intentionally use libstdc++, pass
 `-stdlib=libstdc++ -static-libstdc++ -static-libgcc`. For explicit libc++
@@ -114,20 +96,20 @@ Create `.cargo/config.toml` in the Rust workspace:
 
 ```toml
 [target.aarch64-unknown-linux-musl]
-linker = "/opt/clang+llvm-23.1.0-rc2-aarch64-linux-musl/bin/clang"
+linker = "/opt/clang+llvm-23.1.2-aarch64-linux-musl/bin/clang"
 rustflags = [
   "-Clink-arg=--target=aarch64-linux-musl",
   "-Clink-arg=--sysroot=/opt/musl/aarch64",
 ]
 ```
 
-Replace `/opt/clang+llvm-23.1.0-rc2-aarch64-linux-musl` and
+Replace `/opt/clang+llvm-23.1.2-aarch64-linux-musl` and
 `/opt/musl/aarch64` with the actual toolchain and musl sysroot paths. For
 x86_64, use the corresponding values:
 
 ```toml
 [target.x86_64-unknown-linux-musl]
-linker = "/opt/clang+llvm-23.1.0-rc2-x86_64-linux-musl/bin/clang"
+linker = "/opt/clang+llvm-23.1.2-x86_64-linux-musl/bin/clang"
 rustflags = [
   "-Clink-arg=--target=x86_64-linux-musl",
   "-Clink-arg=--sysroot=/opt/musl/x86_64",

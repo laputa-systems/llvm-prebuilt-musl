@@ -1,4 +1,5 @@
-LLVM_VERSION ?= 23.1.0-rc2
+include llvm-source.env
+
 LLVM_ARCH     ?= $(shell uname -m | sed 's/arm64/aarch64/')
 DOCKER_TAG    := llvm-prebuilt-musl:alpine
 ifeq ($(shell uname -m),arm64)
@@ -8,10 +9,10 @@ else
 endif
 USE_CCACHE    ?= 1
 
-LLVM_TARBALL  := llvm-project-$(LLVM_VERSION).src.tar.xz
-LLVM_URL      := https://github.com/llvm/llvm-project/releases/download/llvmorg-$(LLVM_VERSION)/$(LLVM_TARBALL)
-LLVM_DIR      ?= $(shell pwd)/../llvm-project-$(LLVM_VERSION).src
 WORKDIR       := $(shell pwd)
+LLVM_DIR      ?= $(WORKDIR)/work/llvm-project-$(LLVM_VERSION)
+LLVM_DOWNLOAD_DIR ?= $(WORKDIR)/work/download
+export LLVM_VERSION LLVM_SOURCE_SHA256 LLVM_DIR LLVM_DOWNLOAD_DIR
 
 .PHONY: all build source docker-image clean distclean
 
@@ -50,14 +51,8 @@ else
 		$(DOCKER_TAG) /work/llvm-prebuilt/scripts/build-llvm-musl.sh
 endif
 
-source: $(LLVM_DIR)
-
-$(LLVM_DIR):
-	@echo "=== Downloading LLVM $(LLVM_VERSION) source ==="
-	curl -fsSL -o /tmp/$(LLVM_TARBALL) "$(LLVM_URL)"
-	mkdir -p "$(LLVM_DIR)"
-	tar -xf /tmp/$(LLVM_TARBALL) -C "$(LLVM_DIR)" --strip-components=1
-	rm -f /tmp/$(LLVM_TARBALL)
+source:
+	scripts/fetch-llvm-source.sh
 
 docker-image:
 	@echo "=== Building Docker image ==="

@@ -8,7 +8,6 @@ set -euo pipefail
 LLVM_VERSION="${LLVM_VERSION:?LLVM_VERSION is required}"
 LLVM_ARCH="${LLVM_ARCH:?LLVM_ARCH is required (x86_64 or aarch64)}"
 CLANG_MAJOR="${LLVM_VERSION%%.*}"
-LLVM_VERSION_BASE="${LLVM_VERSION%%-*}"
 LLVM_PROJECT_DIR="${LLVM_PROJECT_DIR:-/work/llvm-project}"
 LLVM_PREBUILT_DIR="${LLVM_PREBUILT_DIR:-/work/llvm-prebuilt}"
 LLVM_HOST_BUILD_DIR="${LLVM_HOST_BUILD_DIR:-/work/llvm-host}"
@@ -78,51 +77,7 @@ exec > >(tee -a "${LLVM_PREBUILT_DIR}/build-${LLVM_ARCH}.log") 2>&1
 
 echo "=== Building LLVM ${LLVM_VERSION} for ${TARGET_TRIPLE} ==="
 
-# Apply versioned local fixes before configuring any LLVM build tree. The
-# reverse dry-run makes repeated stage entrypoints safe when a prior stage
-# applied the patch but did not create its marker.
-apply_source_patches() {
-    local stamp="${LLVM_PROJECT_DIR}/.llvm-prebuilt-musl-patches-${LLVM_VERSION}"
-    local patches=("${LLVM_PREBUILT_DIR}"/patches/*.patch)
-    [ -e "${patches[0]}" ] || return
-
-    local expected_stamp
-    expected_stamp=$(
-        printf 'LLVM %s patches applied\n' "$LLVM_VERSION"
-        for patch_file in "${patches[@]}"; do
-            case "$(basename "$patch_file")" in
-                *-llvm22-*) [ "$CLANG_MAJOR" = "22" ] || continue ;;
-                *-llvm23-*) [ "$CLANG_MAJOR" = "23" ] || continue ;;
-            esac
-            sha256sum "$patch_file"
-        done
-    )
-    if [ -f "$stamp" ] && cmp -s <(printf '%s\n' "$expected_stamp") "$stamp"; then
-        return
-    fi
-
-    for patch_file in "${patches[@]}"; do
-        case "$(basename "$patch_file")" in
-            *-llvm22-*)
-                [ "$CLANG_MAJOR" = "22" ] || continue
-                ;;
-            *-llvm23-*)
-                [ "$CLANG_MAJOR" = "23" ] || continue
-                ;;
-        esac
-        if patch -d "${LLVM_PROJECT_DIR}" -p1 --dry-run --forward --batch < "$patch_file" >/dev/null; then
-            patch -d "${LLVM_PROJECT_DIR}" -p1 --forward --batch < "$patch_file"
-        elif patch -d "${LLVM_PROJECT_DIR}" -p1 --dry-run --reverse --batch < "$patch_file" >/dev/null; then
-            echo "=== Patch already applied: $(basename "$patch_file") ==="
-        else
-            die "cannot apply LLVM patch: $patch_file"
-        fi
-    done
-
-    printf '%s\n' "$expected_stamp" > "$stamp"
-}
-
-apply_source_patches
+"${LLVM_PREBUILT_DIR}/scripts/apply-patches.sh" "${LLVM_PROJECT_DIR}"
 
 # ── Stage 1: Host tools ────────────────────────────────────────────────
 
@@ -339,7 +294,7 @@ if [ ! -e "${LLVM_BUILD_DIR}/bin/ld.lld" ]; then
 fi
 require_executable "${LLVM_BUILD_DIR}/bin/lld" "stage1 lld"
 require_executable "${LLVM_BUILD_DIR}/bin/ld.lld" "stage1 ld.lld"
-"${LLVM_BUILD_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION_BASE}" ||
+"${LLVM_BUILD_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION}" ||
     die "stage1 ld.lld version is not ${LLVM_VERSION}"
 printf 'int main(void) { return 0; }\n' |
     clang -x c - -fuse-ld="${LLVM_BUILD_DIR}/bin/ld.lld" -o "${LLVM_BUILD_DIR}/stage1-lld-link-check" ||
@@ -363,7 +318,7 @@ require_executable "${STAGE2_BINS_DIR}/bin/lld" "stage2 lld"
 require_executable "${STAGE2_BINS_DIR}/bin/ld.lld" "stage2 ld.lld"
 "${STAGE2_BINS_DIR}/bin/clang" --version | grep -q "clang version ${LLVM_VERSION}" ||
     die "stage2 clang version is not ${LLVM_VERSION}"
-"${STAGE2_BINS_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION_BASE}" ||
+"${STAGE2_BINS_DIR}/bin/ld.lld" --version | grep -q "LLD ${LLVM_VERSION}" ||
     die "stage2 ld.lld version is not ${LLVM_VERSION}"
 finish_stage stage2
 

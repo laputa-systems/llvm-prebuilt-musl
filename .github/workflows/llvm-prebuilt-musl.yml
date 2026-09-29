@@ -4,12 +4,11 @@ on:
 
 jobs:
   build:
-    name: LLVM ${{matrix.version}} [${{matrix.arch}}-linux-musl]
+    name: LLVM [${{matrix.arch}}-linux-musl]
     strategy:
       fail-fast: false
       matrix:
         arch: [x86_64, aarch64]
-        version: [23.1.0-rc2]
         include:
           - arch: x86_64
             runner: ubuntu-24.04
@@ -26,31 +25,27 @@ jobs:
 
       # -- LLVM source --
 
+      - name: Load pinned LLVM version
+        run: cat llvm-prebuilt/llvm-source.env >> "$GITHUB_ENV"
+
       - name: Restore LLVM source tarball cache
-        id: cache-llvm-source
         uses: actions/cache/restore@v4
         with:
-          path: llvm-project.tar.xz
-          key: llvm-source-${{matrix.version}}-v1
+          path: llvm-download
+          key: llvm-source-${{env.LLVM_VERSION}}-${{env.LLVM_SOURCE_SHA256}}
 
-      - name: Download LLVM ${{matrix.version}} source
-        if: steps.cache-llvm-source.outputs.cache-hit != 'true'
-        run: |
-          curl -fsSL -o llvm-project.tar.xz \
-            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{matrix.version}}/llvm-project-${{matrix.version}}.src.tar.xz"
+      - name: Fetch and verify LLVM source
+        env:
+          LLVM_DIR: ${{github.workspace}}/llvm-project
+          LLVM_DOWNLOAD_DIR: ${{github.workspace}}/llvm-download
+        run: llvm-prebuilt/scripts/fetch-llvm-source.sh
 
       - name: Save LLVM source tarball cache
-        if: steps.cache-llvm-source.outputs.cache-hit != 'true' && hashFiles('llvm-project.tar.xz') != ''
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
-          path: llvm-project.tar.xz
-          key: llvm-source-${{matrix.version}}-v1
-
-      - name: Extract LLVM source
-        run: |
-          mkdir -p llvm-project
-          tar -xf llvm-project.tar.xz -C llvm-project --strip-components=1
+          path: llvm-download
+          key: llvm-source-${{env.LLVM_VERSION}}-${{env.LLVM_SOURCE_SHA256}}
 
       # -- host tools cache --
 
@@ -59,7 +54,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: llvm-host
-          key: llvm-host-${{matrix.arch}}-${{matrix.version}}-v1
+          key: llvm-host-${{matrix.arch}}-${{env.LLVM_VERSION}}-v1
 
       # -- build inside Alpine container --
 
@@ -71,9 +66,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ccache
-          key: ccache-${{matrix.arch}}-${{matrix.version}}-v2-${{github.run_id}}-${{github.run_attempt}}
+          key: ccache-${{matrix.arch}}-${{env.LLVM_VERSION}}-v2-${{github.run_id}}-${{github.run_attempt}}
           restore-keys: |
-            ccache-${{matrix.arch}}-${{matrix.version}}-v2-
+            ccache-${{matrix.arch}}-${{env.LLVM_VERSION}}-v2-
 
       - name: Build Docker image
         run: |
@@ -97,7 +92,7 @@ jobs:
           docker run --rm --platform linux/${{matrix.alpine_arch}} \
             -v "$PWD:$PWD" -w "$PWD" \
             -v "$PWD/ccache:/root/.ccache" \
-            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_VERSION=${{env.LLVM_VERSION}} \
             -e LLVM_ARCH=${{matrix.arch}} \
             -e LLVM_USE_CCACHE=1 \
             -e CCACHE_DIR=/root/.ccache \
@@ -123,14 +118,14 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: llvm-host
-          key: llvm-host-${{matrix.arch}}-${{matrix.version}}-v1
+          key: llvm-host-${{matrix.arch}}-${{env.LLVM_VERSION}}-v1
 
       - name: Stage 2 - configure bootstrap
         run: |
           docker run --rm --platform linux/${{matrix.alpine_arch}} \
             -v "$PWD:$PWD" -w "$PWD" \
             -v "$PWD/ccache:/root/.ccache" \
-            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_VERSION=${{env.LLVM_VERSION}} \
             -e LLVM_ARCH=${{matrix.arch}} \
             -e LLVM_USE_CCACHE=1 \
             -e CCACHE_DIR=/root/.ccache \
@@ -155,7 +150,7 @@ jobs:
           docker run --rm --platform linux/${{matrix.alpine_arch}} \
             -v "$PWD:$PWD" -w "$PWD" \
             -v "$PWD/ccache:/root/.ccache" \
-            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_VERSION=${{env.LLVM_VERSION}} \
             -e LLVM_ARCH=${{matrix.arch}} \
             -e LLVM_USE_CCACHE=1 \
             -e CCACHE_DIR=/root/.ccache \
@@ -180,7 +175,7 @@ jobs:
           docker run --rm --platform linux/${{matrix.alpine_arch}} \
             -v "$PWD:$PWD" -w "$PWD" \
             -v "$PWD/ccache:/root/.ccache" \
-            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_VERSION=${{env.LLVM_VERSION}} \
             -e LLVM_ARCH=${{matrix.arch}} \
             -e LLVM_USE_CCACHE=1 \
             -e CCACHE_DIR=/root/.ccache \
@@ -205,7 +200,7 @@ jobs:
           docker run --rm --platform linux/${{matrix.alpine_arch}} \
             -v "$PWD:$PWD" -w "$PWD" \
             -v "$PWD/ccache:/root/.ccache" \
-            -e LLVM_VERSION=${{matrix.version}} \
+            -e LLVM_VERSION=${{env.LLVM_VERSION}} \
             -e LLVM_ARCH=${{matrix.arch}} \
             -e LLVM_USE_CCACHE=1 \
             -e CCACHE_DIR=/root/.ccache \
@@ -258,15 +253,15 @@ jobs:
 
       - name: Package LLVM
         run: |
-          mv llvm-install "clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl"
-          tar -cJf "clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl.tar.xz" \
-            "clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl"
+          mv llvm-install "clang+llvm-${{env.LLVM_VERSION}}-${{matrix.arch}}-linux-musl"
+          tar -cJf "clang+llvm-${{env.LLVM_VERSION}}-${{matrix.arch}}-linux-musl.tar.xz" \
+            "clang+llvm-${{env.LLVM_VERSION}}-${{matrix.arch}}-linux-musl"
 
       - name: Upload LLVM package
         uses: actions/upload-artifact@v4
         with:
-          name: clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl
-          path: clang+llvm-${{matrix.version}}-${{matrix.arch}}-linux-musl.tar.xz
+          name: clang+llvm-${{env.LLVM_VERSION}}-${{matrix.arch}}-linux-musl
+          path: clang+llvm-${{env.LLVM_VERSION}}-${{matrix.arch}}-linux-musl.tar.xz
 
   release:
     needs: build
@@ -275,6 +270,12 @@ jobs:
       actions: read
       contents: write
     steps:
+      - name: Checkout pinned version
+        uses: actions/checkout@v4
+
+      - name: Load pinned LLVM version
+        run: cat llvm-source.env >> "$GITHUB_ENV"
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -292,10 +293,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
-          TAG="llvm-musl-23.1.0-rc2-${SHORT_SHA}"
+          TAG="llvm-musl-${LLVM_VERSION}-${SHORT_SHA}"
           gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --prerelease \
             --target "$GITHUB_SHA" \
             --title "$TAG" \
             --notes ""

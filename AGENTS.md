@@ -36,35 +36,27 @@ LLVM source → host tools → configure → stage1 lld → stage2 (shipped) →
   requires the target musl runtime and a target sysroot for libc headers/startup
   objects, but not Alpine's libclang, libstdc++, libgcc, or zlib libraries.
 - **Link parallelism**: `LLVM_PARALLEL_LINK_JOBS=2`.
-- **LLVM 23 DSE patch**: `patches/0001-llvm23-dse-use-iterative-dominance-walk.patch` replaces
-  the recursive DSE dominator-tree walk with an explicit worklist. The stage runner
-  applies this patch before configuring the build.
-- **LLVM 22 `computeKnownBitsAddSub` patch**:
-  `patches/0002-llvm22-instcombine-recognize-non-negative-subtraction-patterns.patch`
-  backports the upstream non-negative `smin` subtraction improvement and its
-  minimal regression test. Version-qualified patch filenames are filtered by
-  the stage runner.
-- **LLVM 22 ScalarEvolution recursion patch**:
-  `patches/0003-llvm22-scev-limit-getrangeref-phi-recursion.patch` ports the
-  upstream PHI-range recursion limit from issue #148253. It prevents
-  `getRangeRef`/`createSCEV` stack exhaustion during loop unrolling and ThinLTO.
+- **LLVM DSE patch**: `patches/0001-llvm23-dse-use-iterative-dominance-walk.patch` replaces
+  the recursive DSE dominator-tree walk with an explicit worklist. `scripts/apply-patches.sh`
+  applies it strictly (zero fuzz) before configuring the build. See `patches/README.md`.
 - **Build dirs**: mounted to host filesystem (Docker overlay would fill up with ~30 GB).
 
 ### Local build
 
 ```sh
-curl -fsSL -o llvm-project.tar.xz \
-  "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0-rc2/llvm-project-23.1.0-rc2.src.tar.xz"
-mkdir -p llvm-project && tar -xf llvm-project.tar.xz -C llvm-project --strip-components=1
-docker build --platform linux/arm64 -f docker/alpine-llvm-musl.Dockerfile -t llvm-prebuilt-musl:alpine .
-LLVM_ARCH=aarch64 make build
+make build            # fetches + verifies the pinned source, builds the image, builds
 ```
 
-On x86_64 omit `--platform` (native).
+`LLVM_ARCH` defaults to the host architecture. The LLVM version and source
+checksum are pinned in `llvm-source.env`; `make source` downloads and verifies
+the archive.
 
 ## Files
 
 ```
+llvm-source.env                   Pinned LLVM version + source sha256 (Makefile, scripts, CI)
+scripts/fetch-llvm-source.sh      Download, verify, extract the pinned source archive
+scripts/apply-patches.sh          Strict, repeatable application of patches/*.patch
 scripts/build-llvm-musl.sh        Full local wrapper: runs all stage scripts
 scripts/llvm-musl-stage-runner.sh Shared implementation used by each stage
 scripts/stages/host-tools.sh      Build + validate native host tools
