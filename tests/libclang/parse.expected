@@ -1,0 +1,4 @@
+diagnostics=0
+StructDecl S
+FieldDecl field
+FunctionDecl add

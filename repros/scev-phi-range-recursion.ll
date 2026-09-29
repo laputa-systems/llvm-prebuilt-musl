@@ -1,3 +1,9 @@
+; Reduced control input for ScalarEvolution PHI-range recursion (LLVM issue
+; #148253), fixed upstream by PR #152823. Loop unrolling must complete on a
+; deliberately small stack.
+;
+; RUN: ulimit -s 250; opt -passes=loop-unroll -disable-output %s
+
 ; ModuleID = '<bc file>'
 source_filename = "/tmp/llvm-issue-148253.ll"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128-ni:1-p2:32:8:8:32-ni:2"

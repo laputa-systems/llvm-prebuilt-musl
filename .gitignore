@@ -1,6 +1,1 @@
-build*.log
-llvm-install/
-llvm-build/
-llvm-host/
-clang+llvm*.tar.xz
 work/

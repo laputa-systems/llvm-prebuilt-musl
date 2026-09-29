@@ -1,77 +1,103 @@
-# ── Host tool paths (set by build script env vars) ──────────────────
-if(DEFINED ENV{LLVM_NATIVE_TOOL_DIR})
-    set(LLVM_NATIVE_TOOL_DIR $ENV{LLVM_NATIVE_TOOL_DIR} CACHE FILEPATH "")
-    message(STATUS "LLVM_NATIVE_TOOL_DIR: ${LLVM_NATIVE_TOOL_DIR}")
-endif()
-if(DEFINED ENV{CLANG_TABLEGEN})
-    set(CLANG_TABLEGEN $ENV{CLANG_TABLEGEN} CACHE FILEPATH "")
-endif()
-if(DEFINED ENV{LLVM_TABLEGEN})
-    set(LLVM_TABLEGEN $ENV{LLVM_TABLEGEN} CACHE FILEPATH "")
-endif()
-if(DEFINED ENV{LLVM_CONFIG_PATH})
-    set(LLVM_CONFIG_PATH $ENV{LLVM_CONFIG_PATH} CACHE FILEPATH "")
-endif()
-if(DEFINED ENV{LLVM_VERSION})
-    set(LLVM_VERSION $ENV{LLVM_VERSION} CACHE FILEPATH "")
-endif()
-if(DEFINED ENV{CMAKE_INSTALL_PREFIX})
-    set(CMAKE_INSTALL_PREFIX $ENV{CMAKE_INSTALL_PREFIX} CACHE FILEPATH "")
-endif()
+# Initial CMake cache for the release toolchain (`cmake -C`).
+#
+# One LLVM build tree builds clang, lld, and the LLVM utilities with the host
+# (Alpine) compiler. The runtimes -- compiler-rt builtins, libc++, libc++abi,
+# libunwind -- are built by the same tree with the clang it just produced.
+# Settings that depend on the environment (compilers, target triple, install
+# prefix, ccache) are passed by scripts/build.sh, not set here.
 
-# ── Build configuration ──────────────────────────────────────────────
+# -- Build configuration -------------------------------------------------------
+# Release without overriding the flags: the compiler tools are built with
+# LLVM's default "-O3 -DNDEBUG".
 set(CMAKE_BUILD_TYPE Release CACHE STRING "")
-set(LLVM_ENABLE_ASSERTIONS OFF CACHE BOOL "")
-set(LLVM_INCLUDE_DOCS OFF CACHE BOOL "")
-set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "")
-set(LLVM_INCLUDE_BENCHMARKS OFF CACHE BOOL "")
-set(LLVM_INCLUDE_EXAMPLES OFF CACHE BOOL "")
-set(LLVM_INCLUDE_GO_TESTS OFF CACHE BOOL "")
-set(LLVM_INCLUDE_UTILS OFF CACHE BOOL "" FORCE)
-set(LLVM_BUILD_UTILS OFF CACHE BOOL "")
-set(LLVM_INSTALL_UTILS OFF CACHE BOOL "")
+# Alpine's packaged clang hardens by default: stack protection, stack-clash
+# probes, and _FORTIFY_SOURCE=2 (which routes memory and string calls through
+# fortify-headers). Upstream's driver, and so the bootstrap-built compiler this
+# package used to ship, does none of that. Keep the tools' code generation
+# independent of the build image's distro patches. These flags apply to the LLVM
+# tools only: the runtimes are separate CMake projects built by the new clang and
+# do not inherit them.
+set(CMAKE_C_FLAGS "-fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE" CACHE STRING "")
+set(CMAKE_CXX_FLAGS "-fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE" CACHE STRING "")
 
-# ── Target backends: only what Laputa targets ────────────────────────
-set(LLVM_TARGETS_TO_BUILD "X86;AArch64" CACHE STRING "" FORCE)
+# -- Compiler tools ------------------------------------------------------------
+# Both backends in every package; the runtimes are for the package's own arch.
+set(LLVM_TARGETS_TO_BUILD "X86;AArch64" CACHE STRING "")
+set(LLVM_ENABLE_PROJECTS "clang;lld" CACHE STRING "")
+set(LLVM_ENABLE_LLD ON CACHE BOOL "")
+set(LLVM_ENABLE_LIBXML2 OFF CACHE BOOL "")
+set(LLVM_ENABLE_ZSTD OFF CACHE BOOL "")
+set(LLVM_ENABLE_TERMINFO OFF CACHE BOOL "")
+set(LLVM_ENABLE_BACKTRACES OFF CACHE BOOL "")
+set(LLVM_ENABLE_UNWIND_TABLES OFF CACHE BOOL "")
+set(LLVM_ENABLE_EH OFF CACHE BOOL "")
+set(LLVM_ENABLE_RTTI OFF CACHE BOOL "")
 
-# ── Projects: no clang-tools-extra ───────────────────────────────────
-set(LLVM_ENABLE_PROJECTS "clang;lld" CACHE STRING "" FORCE)
+# zlib is linked statically so the tools need no libz.so at run time.
+set(LLVM_ENABLE_ZLIB ON CACHE BOOL "")
+set(ZLIB_USE_STATIC_LIBS ON CACHE BOOL "")
+set(ZLIB_LIBRARY /usr/lib/libz.a CACHE FILEPATH "")
+set(ZLIB_LIBRARY_RELEASE /usr/lib/libz.a CACHE FILEPATH "")
+set(ZLIB_LIBRARY_DEBUG /usr/lib/libz.a CACHE FILEPATH "")
 
-# ── Optional dependencies ─────────────────────────────────────────────
-set(LLVM_ENABLE_LIBXML2 OFF CACHE BOOL "" FORCE)
-set(LLVM_ENABLE_ZLIB ON CACHE BOOL "" FORCE)
-set(ZLIB_USE_STATIC_LIBS ON CACHE BOOL "" FORCE)
-set(ZLIB_LIBRARY /usr/lib/libz.a CACHE FILEPATH "" FORCE)
-set(ZLIB_LIBRARY_RELEASE /usr/lib/libz.a CACHE FILEPATH "" FORCE)
-set(ZLIB_LIBRARY_DEBUG /usr/lib/libz.a CACHE FILEPATH "" FORCE)
-set(LLVM_ENABLE_ZSTD OFF CACHE BOOL "" FORCE)
-set(LLVM_ENABLE_TERMINFO OFF CACHE BOOL "" FORCE)
-set(LLVM_ENABLE_BACKTRACES OFF CACHE BOOL "" FORCE)
-set(LLVM_ENABLE_UNWIND_TABLES OFF CACHE BOOL "" FORCE)
-set(LLVM_ENABLE_EH OFF CACHE BOOL "" FORCE)
-set(LLVM_ENABLE_RTTI OFF CACHE BOOL "" FORCE)
+# The tools embed the host libstdc++ and libgcc instead of depending on them.
+# LLVM_STATIC_LINK_CXX_STDLIB supplies -static-libstdc++; -static-libgcc has no
+# LLVM option. These flags apply to the LLVM tools only: the runtimes below are
+# separate CMake projects and do not inherit them.
+set(LLVM_STATIC_LINK_CXX_STDLIB ON CACHE BOOL "")
+set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc" CACHE STRING "")
+set(CMAKE_SHARED_LINKER_FLAGS "-static-libgcc" CACHE STRING "")
+set(CMAKE_MODULE_LINKER_FLAGS "-static-libgcc" CACHE STRING "")
 
-# ── Runtimes: compiler-rt builtins + libc++ + libcxxabi ──────────────
-# libc++/libcxxabi are LLVM code, not GNU — building them in stage1 is fine.
-set(LLVM_ENABLE_RUNTIMES "compiler-rt;libcxx;libcxxabi;libunwind" CACHE STRING "" FORCE)
-set(COMPILER_RT_BUILD_BUILTINS ON CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_SANITIZERS OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_XRAY OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_LIBFUZZER OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_PROFILE OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_MEMPROF OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_ORC OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_GWP_ASAN OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_CTX_PROFILE OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_XRAY_NO_PREINIT OFF CACHE BOOL "" FORCE)
-set(COMPILER_RT_BUILD_SCUDO_STANDALONE_WITH_LLVM_LIBC OFF CACHE BOOL "" FORCE)
+# Downstream defaults of the shipped compiler.
+set(CLANG_DEFAULT_CXX_STDLIB libc++ CACHE STRING "")
+set(CLANG_DEFAULT_RTLIB compiler-rt CACHE STRING "")
+set(CLANG_DEFAULT_UNWINDLIB libunwind CACHE STRING "")
 
-# ── Distribution: tools, libclang, and the headers needed to use them ──
+# -- Runtimes (built with the just-built clang) --------------------------------
+set(LLVM_ENABLE_RUNTIMES "compiler-rt;libcxx;libcxxabi;libunwind" CACHE STRING "")
+# Flat lib/ and include/c++/v1 layout (no per-target subdirectories), so
+# __config_site and the archives do not depend on the consumer's triple spelling.
+set(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR OFF CACHE BOOL "")
+
+# compiler-rt: builtins only, for the package's own architecture.
+set(COMPILER_RT_DEFAULT_TARGET_ONLY ON CACHE BOOL "")
+set(COMPILER_RT_BUILD_SANITIZERS OFF CACHE BOOL "")
+set(COMPILER_RT_BUILD_XRAY OFF CACHE BOOL "")
+set(COMPILER_RT_BUILD_LIBFUZZER OFF CACHE BOOL "")
+set(COMPILER_RT_BUILD_PROFILE OFF CACHE BOOL "")
+set(COMPILER_RT_BUILD_MEMPROF OFF CACHE BOOL "")
+set(COMPILER_RT_BUILD_ORC OFF CACHE BOOL "")
+set(COMPILER_RT_BUILD_GWP_ASAN OFF CACHE BOOL "")
+set(COMPILER_RT_BUILD_CTX_PROFILE OFF CACHE BOOL "")
+
+# libc++, libc++abi, libunwind: static archives only, musl flavor.
+set(LIBCXX_HAS_MUSL_LIBC ON CACHE BOOL "")
+set(LIBCXX_ENABLE_SHARED OFF CACHE BOOL "")
+set(LIBCXX_ENABLE_STATIC ON CACHE BOOL "")
+set(LIBCXXABI_ENABLE_SHARED OFF CACHE BOOL "")
+set(LIBCXXABI_ENABLE_STATIC ON CACHE BOOL "")
+set(LIBUNWIND_ENABLE_SHARED OFF CACHE BOOL "")
+set(LIBUNWIND_ENABLE_STATIC ON CACHE BOOL "")
+# The driver's default C++ link is "-lc++ ... -lunwind": have libc++.a carry the
+# libc++abi objects so that is a complete link. libc++abi.a and libunwind.a are
+# still shipped for explicit links.
+set(LIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY ON CACHE BOOL "")
+# Keep the package contents to libc++ headers and the archives: no C++ module
+# sources (share/), no libunwind headers.
+set(LIBCXX_INSTALL_MODULES OFF CACHE BOOL "")
+set(LIBUNWIND_INSTALL_HEADERS OFF CACHE BOOL "")
+
+# -- Distribution --------------------------------------------------------------
+# `install-distribution` installs exactly these components, nothing else. The
+# runtime components (builtins, cxx, cxxabi, unwind) are top-level install
+# targets that forward to the runtimes sub-builds; `install-cxx` and
+# `install-cxxabi` include their headers.
 set(LLVM_DISTRIBUTION_COMPONENTS
     clang
+    clang-resource-headers
     libclang
     libclang-headers
-    clang-resource-headers
     lld
     LTO
     llvm-ar
@@ -85,111 +111,8 @@ set(LLVM_DISTRIBUTION_COMPONENTS
     llvm-strings
     llvm-strip
     llvm-symbolizer
-    CACHE STRING "" FORCE)
-
-set(LLVM_UNUSED_TOOL_DIRS
-    bugpoint
-    bugpoint-passes
-    dsymutil
-    dxil-dis
-    gold
-    llc
-    lli
-    llvm-as
-    llvm-as-fuzzer
-    llvm-bcanalyzer
-    llvm-c-test
-    llvm-cas
-    llvm-cat
-    llvm-cfi-verify
-    llvm-cgdata
-    llvm-cov
-    llvm-ctxprof-util
-    llvm-cvtres
-    llvm-cxxdump
-    llvm-cxxfilt
-    llvm-cxxmap
-    llvm-debuginfo-analyzer
-    llvm-debuginfod
-    llvm-debuginfod-find
-    llvm-diff
-    llvm-dis
-    llvm-dis-fuzzer
-    llvm-dlang-demangle-fuzzer
-    llvm-driver
-    llvm-dwarfdump
-    llvm-dwarfutil
-    llvm-dwp
-    llvm-exegesis
-    llvm-extract
-    llvm-gpu-loader
-    llvm-gsymutil
-    llvm-ifs
-    llvm-ir2vec
-    llvm-isel-fuzzer
-    llvm-itanium-demangle-fuzzer
-    llvm-jitlink
-    llvm-jitlistener
-    llvm-libtool-darwin
-    llvm-link
-    llvm-lipo
-    llvm-lto
-    llvm-lto2
-    llvm-mc
-    llvm-mc-assemble-fuzzer
-    llvm-mc-disassemble-fuzzer
-    llvm-mca
-    llvm-microsoft-demangle-fuzzer
-    llvm-ml
-    llvm-modextract
-    llvm-mt
-    llvm-offload-binary
-    llvm-offload-wrapper
-    llvm-opt-fuzzer
-    llvm-opt-report
-    llvm-pdbutil
-    llvm-profdata
-    llvm-profgen
-    llvm-rc
-    llvm-readtapi
-    llvm-reduce
-    llvm-remarkutil
-    llvm-rtdyld
-    llvm-rust-demangle-fuzzer
-    llvm-shlib
-    llvm-sim
-    llvm-special-case-list-fuzzer
-    llvm-split
-    llvm-stress
-    llvm-tli-checker
-    llvm-undname
-    llvm-xray
-    llvm-yaml-numeric-parser-fuzzer
-    llvm-yaml-parser-fuzzer
-    obj2yaml
-    opt
-    opt-viewer
-    reduce-chunk-list
-    remarks-shlib
-    sancov
-    sanstats
-    spirv-tools
-    verify-uselistorder
-    vfabi-demangle-fuzzer
-    xcode-toolchain
-    yaml2obj)
-
-foreach(tool IN LISTS LLVM_UNUSED_TOOL_DIRS)
-    string(REPLACE "-" "_" tool_var "${tool}")
-    string(TOUPPER "${tool_var}" tool_var)
-    set("LLVM_TOOL_${tool_var}_BUILD" OFF CACHE BOOL "" FORCE)
-endforeach()
-
-# ── libc++ / libcxxabi / libunwind: static only ──────────────────────
-set(LIBCXX_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
-set(LIBCXX_ENABLE_STATIC ON CACHE BOOL "" FORCE)
-set(LIBCXX_HAS_MUSL_LIBC ON CACHE BOOL "" FORCE)
-set(LIBCXXABI_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
-set(LIBCXXABI_ENABLE_STATIC ON CACHE BOOL "" FORCE)
-set(LIBUNWIND_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
-set(LIBUNWIND_ENABLE_STATIC ON CACHE BOOL "" FORCE)
+    builtins
+    cxx
+    cxxabi
+    unwind
+    CACHE STRING "")

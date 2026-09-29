@@ -1,27 +1,31 @@
 # LLVM Prebuilt Musl
 
 Prebuilt LLVM/Clang 23.1.2 toolchains for `x86_64-linux-musl` and
-`aarch64-linux-musl`. Shipped binaries and shared libraries are dynamically
-linked against musl with no GNU runtime dependencies. LLVM zlib support is
-statically linked into the tools, so no separate `libz.so` is required.
+`aarch64-linux-musl`. Each package targets its own architecture and contains
+both the X86 and AArch64 compiler backends. The tools and shared libraries are
+dynamically linked against musl and nothing else (`libc.musl-<arch>.so.1`);
+libstdc++, libgcc, and zlib are linked into them statically, so no GNU runtime
+libraries or `libz.so` are needed to run them.
 
 ## Artifact Contents
 
 | Path | What |
 |------|------|
-| `bin/clang`, `bin/clang++`, `bin/clang-23` | C/C++ compiler; defaults to bundled libc++, libunwind, and compiler-rt |
-| `bin/lld`, `bin/ld.lld` | ELF linker |
+| `bin/clang`, `bin/clang++`, `bin/clang-23`, `bin/clang-cl`, `bin/clang-cpp` | C/C++ compiler; defaults to the bundled libc++, libunwind, compiler-rt, and lld |
+| `bin/clang.cfg`, `bin/clang++.cfg` | Driver configuration: select `ld.lld` and add the package's `lib/` to the library search path |
+| `bin/lld`, `bin/ld.lld`, `bin/ld64.lld`, `bin/lld-link`, `bin/wasm-ld` | LLVM linker |
 | `bin/llvm-{ar,nm,objcopy,objdump,ranlib,readelf,readobj,size,strings,strip,symbolizer}` | Binary utilities |
-| `lib/libclang.so` | Musl-linked libclang C API library |
-| `include/clang-c/` | libclang C API headers |
+| `lib/libclang.so`, `include/clang-c/` | Musl-linked libclang C API library and headers |
+| `lib/libLTO.so`, `include/llvm-c/lto.h` | Musl-linked LTO library and header |
 | `lib/clang/23/include/` | Clang resource headers |
-| `lib/clang/23/lib/linux/libclang_rt.builtins-*.a` | compiler-rt builtins |
-| `include/c++/v1/` | libc++ headers |
-| `lib/libc++.a`, `lib/libc++abi.a`, `lib/libunwind.a` | Static C++ runtime libraries |
-| `lib/libLTO.so` | Musl-linked LTO plugin |
+| `lib/clang/23/lib/linux/libclang_rt.builtins-<arch>.a` | compiler-rt builtins for the package's architecture |
+| `lib/clang/23/lib/linux/clang_rt.crt{begin,end}-<arch>.o` | compiler-rt startup files, used by the driver in place of GCC's |
+| `include/c++/v1/` | libc++ headers, including the generated `__config_site` |
+| `lib/libc++.a`, `lib/libc++abi.a`, `lib/libunwind.a`, `lib/libc++experimental.a` | Static C++ runtime libraries (`libc++.a` also contains the libc++abi objects) |
 
-Not included: musl itself or a target sysroot, sanitizers, shared C++ libraries,
-clang-tools-extra, CMake exports, libxml2, zstd, and terminfo.
+Not included: musl itself or a target sysroot, sanitizers, shared C++
+runtimes, clang-tools-extra, CMake exports and other LLVM development files,
+libxml2, zstd, and terminfo.
 
 ## Usage
 
@@ -33,15 +37,25 @@ export TOOLCHAIN="$PWD/clang+llvm-23.1.2-aarch64-linux-musl"
 export PATH="$TOOLCHAIN/bin:$PATH"
 ```
 
-Compile and link C:
+The package needs a musl sysroot that provides the target libc: system
+headers, startup objects (`crt1.o`, `crti.o`, `crtn.o`, ...), and `libc.a` or
+the musl shared library. It does not bundle one, and it does not need GCC,
+libstdc++, or libgcc on the build machine.
+
+Compile and link C or C++ for the package's architecture:
 
 ```sh
-clang --target=aarch64-linux-musl \
-  --sysroot=/path/to/musl-sysroot \
-  hello.c -o hello
+clang --target=aarch64-linux-musl --sysroot=/path/to/musl-sysroot hello.c -o hello
+clang++ --target=aarch64-linux-musl --sysroot=/path/to/musl-sysroot hello.cpp -o hello
 ```
 
-Compile and link C++:
+Add `-static` for a fully static executable. The defaults are libc++
+(`-stdlib=libc++`), compiler-rt (`--rtlib=compiler-rt`), libunwind
+(`--unwindlib=libunwind`), and the bundled lld (`-fuse-ld=lld`, from
+`clang.cfg`); the headers and static archives come from the package.
+
+Every default can also be spelled out. This explicit form is equivalent and
+does not depend on `clang++.cfg`:
 
 ```sh
 clang++ --target=aarch64-linux-musl \
@@ -54,10 +68,7 @@ clang++ --target=aarch64-linux-musl \
   hello.cpp -o hello
 ```
 
-The musl sysroot must provide the target libc, startup objects, and system
-headers. `clang++` defaults to the bundled libc++/libunwind/compiler-rt stack;
-the explicit options above make the link contract clear and select the shipped
-static C++ runtime libraries. The toolchain does not provide musl itself.
+`-flto=thin` works with the bundled lld, including for static musl links.
 
 For tools that use libclang through bindgen or another C API client, point the
 loader at the bundled library:
@@ -66,18 +77,15 @@ loader at the bundled library:
 export LIBCLANG_PATH="$TOOLCHAIN/lib"
 ```
 
-The build applies one local LLVM patch: an iterative rewrite of the Dead Store
-Elimination dominator-tree walk, which can otherwise overflow the stack on very
-deep dominator trees. See [`patches/README.md`](patches/README.md) for its
-rationale, upstream status, and regression tests.
-
 For callers that intentionally use libstdc++, pass
-`-stdlib=libstdc++ -static-libstdc++ -static-libgcc`. For explicit libc++
-links, pass the shipped runtime libraries:
+`-stdlib=libstdc++ -static-libstdc++ -static-libgcc`; the package does not
+supply that runtime, so the caller's GCC installation must.
 
-```sh
-clang++ ... -lc++abi -lunwind hello.cpp -o hello
-```
+## Patches
+
+The build applies one local LLVM patch, an iterative rewrite of the Dead Store
+Elimination dominator-tree walk that cannot overflow a small stack. See
+[`patches/README.md`](patches/README.md).
 
 ## Rust
 
