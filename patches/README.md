@@ -1,23 +1,23 @@
 # Local LLVM patches
 
 This directory holds the patches applied to the pristine LLVM source tarball
-pinned in [`llvm-source.env`](../llvm-source.env) (LLVM 23.1.2).
+pinned in [`llvm-source.env`](../llvm-source.env) (LLVM 23.1.5).
 `scripts/apply-patches.sh` applies them before the build is configured.
 
 ## Patch inventory
 
 | Patch | Purpose | Upstream status |
 | --- | --- | --- |
-| [`0001-llvm23-dse-use-iterative-dominance-walk.patch`](0001-llvm23-dse-use-iterative-dominance-walk.patch) | Replaces the recursive dominator-tree walk in `DSEState::eliminateRedundantStoresViaDominatingConditions()` with an explicit worklist, so a deep dominator tree cannot exhaust the stack (for example on a musl worker thread, whose default stack is 128 KiB, during a ThinLTO link). Traversal order, the lifetime of each condition scope, and the `dse-max-dom-cond-depth` limit are unchanged. | Local. The tagged 23.1.2 sources still use the recursive `VisitNode` lambda. Its depth guard predates the patch; it bounds the recursion at 1024 levels but does not remove the stack use. |
+| [`0001-llvm23-dse-use-iterative-dominance-walk.patch`](0001-llvm23-dse-use-iterative-dominance-walk.patch) | Replaces the recursive dominator-tree walk in `DSEState::eliminateRedundantStoresViaDominatingConditions()` with an explicit worklist, so a deep dominator tree cannot exhaust the stack (for example on a musl worker thread, whose default stack is 128 KiB, during a ThinLTO link). Traversal order, the lifetime of each condition scope, and the `dse-max-dom-cond-depth` limit are unchanged. | Local. The tagged 23.1.5 sources still use the recursive `VisitNode` lambda. Its depth guard predates the patch; it bounds the recursion at 1024 levels but does not remove the stack use. |
 
-### Fixes that are upstream in 23.1.2 (no longer patched)
+### Fixes that are upstream in 23.1.5 (no longer patched)
 
 LLVM 22 builds of this package carried two backports. Both are present in the
-pristine 23.1.2 sources, so the patches are gone; their reproducers remain in
+pristine 23.1.5 sources, so the patches are gone; their reproducers remain in
 [`../repros`](../repros) as regression tests for the `opt` built from the
 pinned sources.
 
-| Behavior | Upstream change | Where in 23.1.2 | Reproducer |
+| Behavior | Upstream change | Where in 23.1.5 | Reproducer |
 | --- | --- | --- | --- |
 | `b - smin(b, a)` is non-negative in `computeKnownBitsAddSub` | [6f68daa](https://github.com/llvm/llvm-project/commit/6f68daa42cab4884102a3688d4c13d732da6defd) | `computeKnownBitsAddSub()` in `ValueTracking.cpp` (`m_c_SMin`) | `instcombine-nonneg-smin-sub.ll` |
 | Bounded PHI range recursion in `ScalarEvolution::getRangeRef` (issue [#148253](https://github.com/llvm/llvm-project/issues/148253)) | [PR #152823](https://github.com/llvm/llvm-project/pull/152823), commit [7bc3bb0](https://github.com/llvm/llvm-project/commit/7bc3bb0196d593d57ce5acbecd0b3c26e15b83a5) | `RangeRefPHIAllowedOperands()` in `ScalarEvolution.cpp` | `scev-phi-range-recursion.ll` |

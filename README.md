@@ -1,6 +1,6 @@
 # LLVM Prebuilt Musl
 
-Prebuilt LLVM/Clang 23.1.2 toolchains for `x86_64-linux-musl` and
+Prebuilt LLVM/Clang 23.1.5 toolchains for `x86_64-linux-musl` and
 `aarch64-linux-musl`. Each package targets its own architecture and contains
 both the X86 and AArch64 compiler backends. The tools and shared libraries are
 dynamically linked against musl and nothing else (`libc.musl-<arch>.so.1`);
@@ -32,8 +32,8 @@ libxml2, zstd, and terminfo.
 Extract the archive and add its `bin` directory to `PATH`:
 
 ```sh
-tar xf clang+llvm-23.1.2-aarch64-linux-musl.tar.xz
-export TOOLCHAIN="$PWD/clang+llvm-23.1.2-aarch64-linux-musl"
+tar xf clang+llvm-23.1.5-aarch64-linux-musl.tar.xz
+export TOOLCHAIN="$PWD/clang+llvm-23.1.5-aarch64-linux-musl"
 export PATH="$TOOLCHAIN/bin:$PATH"
 ```
 
@@ -104,20 +104,20 @@ Create `.cargo/config.toml` in the Rust workspace:
 
 ```toml
 [target.aarch64-unknown-linux-musl]
-linker = "/opt/clang+llvm-23.1.2-aarch64-linux-musl/bin/clang"
+linker = "/opt/clang+llvm-23.1.5-aarch64-linux-musl/bin/clang"
 rustflags = [
   "-Clink-arg=--target=aarch64-linux-musl",
   "-Clink-arg=--sysroot=/opt/musl/aarch64",
 ]
 ```
 
-Replace `/opt/clang+llvm-23.1.2-aarch64-linux-musl` and
+Replace `/opt/clang+llvm-23.1.5-aarch64-linux-musl` and
 `/opt/musl/aarch64` with the actual toolchain and musl sysroot paths. For
 x86_64, use the corresponding values:
 
 ```toml
 [target.x86_64-unknown-linux-musl]
-linker = "/opt/clang+llvm-23.1.2-x86_64-linux-musl/bin/clang"
+linker = "/opt/clang+llvm-23.1.5-x86_64-linux-musl/bin/clang"
 rustflags = [
   "-Clink-arg=--target=x86_64-linux-musl",
   "-Clink-arg=--sysroot=/opt/musl/x86_64",

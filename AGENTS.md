@@ -11,7 +11,7 @@ The tools and shared libraries depend dynamically on musl only.
 Alpine's packaged Clang + LLD
           |
           v
-Build patched LLVM/Clang/LLD 23.1.2 tools ONCE ----> optimizer regressions (opt, FileCheck)
+Build patched LLVM/Clang/LLD 23.1.5 tools ONCE ----> optimizer regressions (opt, FileCheck)
           |
           v
 Build compiler-rt builtins and C++ runtimes with that new Clang (same build tree)
@@ -80,7 +80,7 @@ patches/                           Local LLVM patch and its documentation
 
 - **Compilers.** LLVM/Clang/LLD are built with Alpine's packaged clang and ld.lld (build inputs only).
   The runtimes are built by the clang from the same tree. Building `clang` and `lld` first
-  (`scripts/build.sh`) makes the runtimes configure with LLVM 23.1.2's `ld.lld`, not Alpine's.
+  (`scripts/build.sh`) makes the runtimes configure with LLVM 23.1.5's `ld.lld`, not Alpine's.
 - **Runtimes.** `LLVM_ENABLE_RUNTIMES=compiler-rt;libcxx;libcxxabi;libunwind`. LLVM's own runtimes
   machinery handles the fact that the shipped defaults (libc++, compiler-rt, libunwind) are not
   installed yet: builtins are built first, and the runtimes configure with `--unwindlib=none` and
