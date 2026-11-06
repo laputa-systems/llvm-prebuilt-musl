@@ -43,6 +43,20 @@ each). Outputs: `work/<arch>/dist/clang+llvm-<version>-<arch>-linux-musl.tar.xz`
 Only the native architecture is built locally. The `aarch64` package is built and validated natively on
 `ubuntu-24.04-arm` in CI; do not build it under emulation.
 
+A CI run (both native jobs) is slow and expensive. Dispatch it only after a clean local x86_64
+`make build` and `make validate` pass, and do not dispatch it speculatively.
+
+## Upgrading LLVM
+
+- Pin an exact upstream stable release (not an RC or a branch). Take `LLVM_SOURCE_SHA256` from the
+  release metadata (`gh api repos/llvm/llvm-project/releases/tags/llvmorg-<version>`, asset
+  `llvm-project-<version>.src.tar.xz`); `llvm-source.env` is the only place the version is set.
+- Re-check each patch against the pristine tarball of the new release: drop a patch only after
+  confirming the fix is in the source (not because it fails to apply), and keep its reproducer in
+  `repros/`. Rebase with zero fuzz. Record the decision in `patches/README.md`.
+- Keep the shipped compiler's code generation unchanged: `-O3 -DNDEBUG`, no `-march=native` or higher
+  CPU baseline, no PGO/BOLT/LTO of LLVM itself unless that is the change being made.
+
 ## Files
 
 ```
