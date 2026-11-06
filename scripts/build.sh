@@ -9,15 +9,17 @@
 #   regressions  run the optimizer regressions with the new opt
 #   distribution build and install the package; compiler-rt builtins, libc++,
 #                libc++abi, and libunwind are built by the new clang
-#   package      add driver config files, write the tarball
+#   musl         build the bundled static musl libc with the installed clang
+#   package      add driver config files and crt aliases, write the tarball
 set -euo pipefail
 
-: "${LLVM_VERSION:?}" "${LLVM_ARCH:?x86_64 or aarch64}"
+: "${LLVM_VERSION:?}" "${MUSL_VERSION:?}" "${LLVM_ARCH:?x86_64 or aarch64}"
 LLVM_PARALLEL_LINK_JOBS="${LLVM_PARALLEL_LINK_JOBS:-2}"
 LLVM_USE_CCACHE="${LLVM_USE_CCACHE:-0}"
 
 REPO=/work/repo
 SRC=/work/src
+MUSL_SRC=/work/musl-src
 STATE=/work/state
 BUILD="${STATE}/build"
 NAME="clang+llvm-${LLVM_VERSION}-${LLVM_ARCH}-linux-musl"
@@ -55,6 +57,12 @@ version_file="${SRC}/cmake/Modules/LLVMVersion.cmake"
 src_version=$(sed -n 's/^ *set(LLVM_VERSION_\(MAJOR\|MINOR\|PATCH\) \([0-9]*\))/\2/p' "$version_file" | paste -sd. -)
 [ "$src_version" = "${LLVM_VERSION}" ] ||
     die "source tree is LLVM ${src_version}, expected ${LLVM_VERSION}"
+musl_version_file="${MUSL_SRC}/VERSION"
+[ -f "$musl_version_file" ] || die "${MUSL_SRC} is not a musl checkout"
+[ "$(cat "$musl_version_file")" = "${MUSL_VERSION}" ] ||
+    die "musl source tree is $(cat "$musl_version_file"), expected ${MUSL_VERSION}"
+
+runtime_dir="lib/clang/${LLVM_VERSION%%.*}/lib/linux"
 
 CMAKE_ARGS=(
     -C "${REPO}/cmake/llvm-musl-distribution.cmake"
@@ -110,27 +118,80 @@ phase "distribution: tools, runtimes, install"
 rm -rf "$PREFIX"
 cmake --build "$BUILD" --target install-distribution
 
+# -- musl -------------------------------------------------------------------------
+# The bundled libc is built by the package's own clang and compiler-rt, with no
+# GCC-built object in it, and out of tree so the pinned source stays pristine.
+# Only libc.a and the startup objects are shipped: target headers stay the
+# consumer's. The config files are written afterwards, so this phase sees the
+# driver's installed defaults.
+phase "musl libc ${MUSL_VERSION}"
+MUSL_BUILD="${STATE}/musl-build"
+rm -rf "$MUSL_BUILD"
+mkdir -p "$MUSL_BUILD"
+(
+    cd "$MUSL_BUILD"
+    CC="${PREFIX}/bin/clang" \
+    AR="${PREFIX}/bin/llvm-ar" \
+    RANLIB="${PREFIX}/bin/llvm-ranlib" \
+    LIBCC="${PREFIX}/${runtime_dir}/libclang_rt.builtins-${LLVM_ARCH}.a" \
+        "${MUSL_SRC}/configure" --disable-shared --target="${LLVM_ARCH}"
+    make -j"$(nproc)"
+)
+mkdir -p "${PREFIX}/lib/musl"
+install -m 644 "${MUSL_BUILD}/lib/libc.a" "${PREFIX}/lib/musl/libc.a"
+for obj in crt1.o rcrt1.o Scrt1.o crti.o crtn.o; do
+    install -m 644 "${MUSL_BUILD}/lib/${obj}" "${PREFIX}/lib/musl/${obj}"
+done
+# A directory holding only libc.a would win -lc for ordinary links too, turning
+# every default link into a static-libc one. The script keeps -lc dynamic, and
+# '=' makes lld resolve the loader inside --sysroot; -static and -static-pie
+# skip libc.so and take the archive.
+printf 'GROUP ( =/lib/ld-musl-%s.so.1 )\n' "${LLVM_ARCH}" > "${PREFIX}/lib/musl/libc.so"
+chmod 644 "${PREFIX}/lib/musl/libc.so"
+
 # -- package ----------------------------------------------------------------------
 phase "package"
-# Clang reads <bin>/<name>.cfg. Default to the bundled lld, and search the flat
-# lib/ directory that holds libc++.a, libc++abi.a, and libunwind.a: on its own
-# the driver only searches per-target subdirectories. <CFGDIR> keeps the package
-# relocatable, and the bracketed -L is not reported as unused when only compiling.
+# Clang reads <bin>/<name>.cfg. Select the bundled lld and compiler-rt and leave
+# unwinding to the caller (programs that unwind pass --unwindlib=libunwind), and
+# search the flat lib/ (libc++.a, libc++abi.a, libunwind.a) and lib/musl/
+# (startup objects, libc.a). -B is a driver option: it makes the startup objects
+# resolve inside the package; on its own the driver searches only per-target
+# subdirectories. <CFGDIR> keeps the package relocatable, and the bracketed
+# arguments are not reported as unused when only compiling.
 for cfg in clang clang++; do
     cat > "${PREFIX}/bin/${cfg}.cfg" <<'EOF'
 -fuse-ld=lld
+--rtlib=compiler-rt
+--unwindlib=none
 --start-no-unused-arguments
+-B<CFGDIR>/../lib/musl
+-L<CFGDIR>/../lib/musl
 -L<CFGDIR>/../lib
 --end-no-unused-arguments
 EOF
 done
 
-runtime_dir="lib/clang/${LLVM_VERSION%%.*}/lib/linux"
+# compiler-rt's crtbegin/crtend are the real objects: they define __dso_handle
+# and run C++ static destructors, which an empty stub would break. The GCC names
+# and the non-arch compiler-rt names are aliases, so a driver that falls back to
+# GetFilePath never needs a GCC crt file.
+rt="${PREFIX}/${runtime_dir}"
+ln -sf "clang_rt.crtbegin-${LLVM_ARCH}.o" "${rt}/clang_rt.crtbegin.o"
+ln -sf "clang_rt.crtend-${LLVM_ARCH}.o" "${rt}/clang_rt.crtend.o"
+for name in crtbegin crtbeginS crtbeginT; do
+    ln -sf "clang_rt.crtbegin-${LLVM_ARCH}.o" "${rt}/${name}.o"
+done
+for name in crtend crtendS; do
+    ln -sf "clang_rt.crtend-${LLVM_ARCH}.o" "${rt}/${name}.o"
+done
+
 for required in bin/clang bin/clang++ bin/ld.lld bin/llvm-ar lib/libclang.so lib/libLTO.so \
                 include/clang-c/Index.h include/c++/v1/__config_site include/c++/v1/iostream \
                 lib/libc++.a lib/libc++abi.a lib/libunwind.a \
                 "${runtime_dir}/libclang_rt.builtins-${LLVM_ARCH}.a" \
-                "${runtime_dir}/clang_rt.crtbegin-${LLVM_ARCH}.o" "${runtime_dir}/clang_rt.crtend-${LLVM_ARCH}.o"; do
+                "${runtime_dir}/clang_rt.crtbegin-${LLVM_ARCH}.o" "${runtime_dir}/clang_rt.crtend-${LLVM_ARCH}.o" \
+                lib/musl/libc.a lib/musl/crt1.o lib/musl/rcrt1.o lib/musl/Scrt1.o \
+                lib/musl/crti.o lib/musl/crtn.o lib/musl/libc.so; do
     [ -e "${PREFIX}/${required}" ] || die "install is missing ${required}"
 done
 "${PREFIX}/bin/clang" --version

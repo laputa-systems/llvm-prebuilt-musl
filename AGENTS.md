@@ -3,7 +3,9 @@
 User-facing artifact contents, usage, and Rust configuration are documented in `README.md`.
 
 Builds a musl-linked LLVM/Clang toolchain for `x86_64-linux-musl` and `aarch64-linux-musl`.
-The tools and shared libraries depend dynamically on musl only.
+The tools and shared libraries depend dynamically on musl only. The package also carries a static
+musl libc (libc.a and startup objects) built by the shipped clang, so consumers need no GCC-built
+libc.
 
 ## Build graph
 
@@ -17,7 +19,10 @@ Build patched LLVM/Clang/LLD 23.1.5 tools ONCE ----> optimizer regressions (opt,
 Build compiler-rt builtins and C++ runtimes with that new Clang (same build tree)
           |
           v
-install-distribution -> package (tar.xz) -> validate in a clean container
+install-distribution -> build musl 1.2.6 with the installed clang -> add lib/musl
+          |
+          v
+package (tar.xz) -> validate in a clean container
 ```
 
 One CMake configuration, one LLVM build tree. `scripts/build.sh` runs the phases inside a single
@@ -30,14 +35,15 @@ build container; `make build` and CI both call it.
 | `make build` | Fetch and verify the pinned source, build the image, run `scripts/build.sh` in it |
 | `make validate` | Run `scripts/validate.sh` on the package in a separate, clean, network-less container |
 | `make` | Both |
-| `make source` | Only fetch, verify, and extract the source |
+| `make source` | Only fetch, verify, and extract the LLVM and musl sources |
 | `make clean` / `make distclean` | Remove this architecture's state / all generated state (never a user-supplied `LLVM_DIR`) |
 
 The host needs Docker, GNU make, `curl`, `tar`, `xz`, and `sha256sum` (or `shasum`). `LLVM_ARCH=x86_64|aarch64` selects the package (default: host architecture; `arm64` and `amd64` are
 normalized) and the matching Docker platform. Other knobs: `WORK_DIR` (all generated files, default
 `work/`, git-ignored), `LLVM_DIR` (an existing checkout of the pinned release; it is patched, never
-deleted), `USE_CCACHE=0`, `LLVM_PARALLEL_LINK_JOBS` (default 2: linking LLVM tools needs several GiB
-each). Outputs: `work/<arch>/dist/clang+llvm-<version>-<arch>-linux-musl.tar.xz`, a `.manifest`, and
+deleted), `MUSL_DIR` (an existing checkout of the pinned musl release), `USE_CCACHE=0`,
+`LLVM_PARALLEL_LINK_JOBS` (default 2: linking LLVM tools needs several GiB each). Outputs:
+`work/<arch>/dist/clang+llvm-<version>-<arch>-linux-musl.tar.xz`, a `.manifest`, and
 `work/<arch>/logs/build.log`.
 
 Only the native architecture is built locally. The `aarch64` package is built and validated natively on
@@ -56,18 +62,22 @@ A CI run (both native jobs) is slow and expensive. Dispatch it only after a clea
   `repros/`. Rebase with zero fuzz. Record the decision in `patches/README.md`.
 - Keep the shipped compiler's code generation unchanged: `-O3 -DNDEBUG`, no `-march=native` or higher
   CPU baseline, no PGO/BOLT/LTO of LLVM itself unless that is the change being made.
+- The bundled musl is pinned separately in `musl-source.env`; bump it only when changing the libc,
+  and let both versions reach the release notes.
 
 ## Files
 
 ```
 llvm-source.env                    Pinned LLVM version + source sha256 (Makefile, scripts, CI)
+musl-source.env                    Pinned musl version + source sha256 for the bundled libc
 Makefile                           Thin entry points; derives Docker platform from LLVM_ARCH
 docker/build.Dockerfile            Alpine 3.23 build image (clang, lld, cmake, ninja, ccache, zlib-static, ...)
-docker/validate.Dockerfile         Clean consumer image: musl-dev only, no compiler or linker
+docker/validate.Dockerfile         Clean consumer image: Alpine 3.24 musl-dev only, no compiler or linker
 cmake/llvm-musl-distribution.cmake Initial CMake cache: what is built, how, and the distribution components
-scripts/fetch-llvm-source.sh       Download, verify (fresh or cached), extract the source archive
+scripts/fetch-llvm-source.sh       Download, verify (fresh or cached), extract the LLVM source archive
+scripts/fetch-musl-source.sh       Download, verify (fresh or cached), extract the musl source archive
 scripts/apply-patches.sh           Strict, repeatable application of patches/*.patch
-scripts/build.sh                   configure -> compiler -> regressions -> distribution -> package
+scripts/build.sh                   configure -> compiler -> regressions -> distribution -> musl -> package
 scripts/run-optimizer-regressions.sh  Runs repros/*.ll RUN lines with the new opt and FileCheck
 scripts/validate.sh                Installed-package validation (runs in the clean container)
 repros/                            Optimizer regression inputs and the DSE IR generator
@@ -103,23 +113,41 @@ patches/                           Local LLVM patch and its documentation
 - **Runtime layout.** `LLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF` keeps the flat layout of earlier packages
   (`lib/libc++.a`, `lib/clang/23/lib/linux/libclang_rt.builtins-<arch>.a`, `include/c++/v1/__config_site`),
   independent of how a consumer spells the target triple. `COMPILER_RT_DEFAULT_TARGET_ONLY=ON` means an
-  x86-64 package never contains i386 builtins. The generated `clang{,++}.cfg` select lld and add
-  `-L<CFGDIR>/../lib` (the driver only searches per-target subdirectories on its own).
-  compiler-rt's `crtbegin`/`crtend` are installed with the builtins: with `--rtlib=compiler-rt` the driver
-  uses them when present and otherwise falls back to GCC's, which made earlier packages link only on
-  machines with a GCC installation. `libc++.a` includes the libc++abi objects
+  x86-64 package never contains i386 builtins. The generated `clang{,++}.cfg` select lld and compiler-rt,
+  set `--unwindlib=none`, and add `-B<CFGDIR>/../lib/musl -L<CFGDIR>/../lib/musl -L<CFGDIR>/../lib`
+  (the driver only searches per-target subdirectories on its own). `-B` is a driver option: it makes `crt1.o`,
+  `Scrt1.o`, `rcrt1.o`, `crti.o`, and `crtn.o` resolve inside the package; `-L` makes `libc.a` the
+  static-libc choice. C++ programs that unwind pass `--unwindlib=libunwind`; the default link must not
+  add `-lunwind`.
+  compiler-rt's `crtbegin`/`crtend` are installed with the builtins and are the real objects (an empty
+  stub would lose `__dso_handle` and break C++ static destructors, which `tests/cxx/features.cpp`
+  checks). The GCC names (`crtbegin{,S,T}.o`, `crtend{,S}.o`) and the non-arch names
+  (`clang_rt.crt{begin,end}.o`) are symlinks to those objects in the resource dir, so a driver that
+  falls back to `GetFilePath` still needs no GCC crt files. `libc++.a` includes the libc++abi objects
   (`LIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY`) so the driver's default `-lc++` is a complete link.
+- **Bundled libc.** musl is pinned in `musl-source.env` and built out-of-tree after `install-distribution`,
+  with the installed package's own `clang`, `llvm-ar`, and `llvm-ranlib`, and
+  `LIBCC=<resource dir>/libclang_rt.builtins-<arch>.a`: `./configure --disable-shared --target=<arch>`,
+  then `make`. `libc.a` and `crt1.o`, `rcrt1.o`, `Scrt1.o`, `crti.o`, `crtn.o` are installed to
+  `lib/musl/`; no musl headers are shipped. Because a directory holding only `libc.a` would also win
+  `-lc` for ordinary links, `lib/musl/libc.so` is a generated linker script,
+  `GROUP ( =/lib/ld-musl-<arch>.so.1 )`: lld expands `=` against `--sysroot`, so default links stay
+  dynamically linked to the system loader and `-static`/`-static-pie` take the archive. The musl build
+  uses no GCC, and `validate.sh` fails the job if any `.comment` in `libc.a`, the bundled crt objects,
+  `libunwind.a`, or the builtins names GCC.
 - **Distribution.** `LLVM_DISTRIBUTION_COMPONENTS` lists the tools plus the runtime install targets
   (`builtins`, `cxx`, `cxxabi`, `unwind`); `install-distribution` builds and installs exactly those.
   Nothing is built and then deleted. C++ module sources and libunwind headers are turned off to keep
   the package contents unchanged from earlier releases.
-- **Alpine boundary.** Alpine packages are build inputs only. The package needs the target musl runtime
-  and a sysroot at use time, but not Alpine's libclang, libstdc++, libgcc, or zlib. The image installs
-  `linux-headers` for libc++'s futex support; no headers are fabricated.
-- **Source and patches.** `llvm-source.env` pins the version and sha256 of the upstream source archive.
-  `scripts/fetch-llvm-source.sh` verifies fresh and cached archives alike and extracts through
-  `<dir>.partial`. `scripts/apply-patches.sh` applies `patches/*.patch` with zero fuzz, recognizes an
-  already-applied patch, and keeps a content-hash stamp. See `patches/README.md`.
+- **Alpine boundary.** Alpine packages are build inputs only. At use time the package needs the target's
+  musl headers, but not its startup objects or `libc.a` (they come from the package), and not Alpine's
+  libclang, libstdc++, libgcc, or zlib. The validation image is Alpine 3.24 so musl-dev matches the
+  bundled musl 1.2.6; the build image stays 3.23 because musl builds freestanding. The build image
+  installs `linux-headers` for libc++'s futex support; no headers are fabricated.
+- **Source and patches.** `llvm-source.env` and `musl-source.env` pin the versions and sha256 of the
+  upstream source archives. `scripts/fetch-*-source.sh` verify fresh and cached archives alike and
+  extract through `<dir>.partial`. `scripts/apply-patches.sh` applies `patches/*.patch` with zero fuzz,
+  recognizes an already-applied patch, and keeps a content-hash stamp. See `patches/README.md`.
 - **Reruns.** `build.sh` hashes the configuration inputs (cache file, CMake arguments, host compiler
   version) and reconfigures from an empty build tree when the hash changes; otherwise ninja is
   incremental. Cleanup only touches the build tree, the install prefix, and `WORK_DIR` state.
@@ -130,20 +158,28 @@ patches/                           Local LLVM patch and its documentation
 ## Validation
 
 `scripts/build.sh` runs the optimizer regressions (`repros/`, with the new `opt`/`FileCheck`, not
-installed). `scripts/validate.sh` then runs in a container that has only musl's headers, startup
-objects, and `libc.a` (no compiler, linker, libstdc++, or libgcc, and no network), on the package
-extracted to a different absolute prefix:
+installed). `scripts/validate.sh` then runs in a container that has musl's headers and dynamic loader
+(no compiler, linker, libstdc++, or libgcc, and no network), on the package extracted to a different
+absolute prefix. The container's musl-dev archives are GCC-built, so any accidental fallback to them
+is caught:
 
-- Package layout: exact expected entries for `bin/`, `lib/`, `include/`; required runtime files;
-  no sanitizers, i386 runtimes, shared C++ runtimes, LLVM libraries, or development exports.
+- Package layout: exact expected entries for `bin/`, `lib/`, `include/`, and `lib/musl/`; required
+  runtime files; no sanitizers, i386 runtimes, shared C++ runtimes, LLVM libraries, or development
+  exports. `lib/musl/libc.so` must be the sysroot-relative loader script, and `libc.a` must carry the
+  pinned musl version string.
 - ELF audit of every shipped ELF file (aliases are symlinks): machine, interpreter, exact `DT_NEEDED`
   (`libc.musl-<arch>.so.1` only), no `DT_RPATH`, `RUNPATH` only `$ORIGIN/../lib`, shared libraries have
   a `SONAME` and no interpreter. `libclang.so` and `libLTO.so` are included.
-- Driver defaults (`-###`): libc++, libunwind, compiler-rt builtins and startup files, the package's
-  `ld.lld`, no libstdc++/libgcc/GCC paths.
+- GCC-free provenance: `llvm-readelf -p .comment` over `libc.a`, its crt objects, `libunwind.a`, and
+  the compiler-rt builtins contains no `GCC:` string; a linked static program's `.comment` must not
+  either.
+- Driver defaults (`-###`): libc++, compiler-rt builtins and startup files, `--unwindlib=none` (no
+  `-lunwind` unless `--unwindlib=libunwind` is passed), the package's musl startup objects and
+  `libc.a`, the package's `ld.lld`, no libstdc++/libgcc/GCC paths.
 - C and C++ programs are compiled, linked, and **run**: default, explicit, documented (README), fully
-  static, no-option, and `PATH`-lookup invocations. C++ covers exceptions with RAII unwinding, threads
-  and `thread_local` destructors, libc++ facilities, RTTI, `__int128` and `long double` builtins.
+  static, static-PIE, no-option, and `PATH`-lookup invocations. C covers `unsigned __int128` division
+  through compiler-rt builtins; C++ covers exceptions with RAII unwinding, threads and `thread_local`
+  destructors, libc++ facilities, RTTI, `__int128` and `long double` builtins.
 - Multi-translation-unit `-flto=thin` (dynamic and static) with a check that cross-module inlining
   happened and a non-LTO control.
 - Both compiled-in backends, LLVM utilities, zlib debug-section compression through lld and
@@ -153,16 +189,18 @@ extracted to a different absolute prefix:
 
 `.github/workflows/llvm-prebuilt-musl.yml` (dispatch only; a `release` boolean input, default false)
 runs `make source`, `make build`, `make validate` on `ubuntu-24.04` (x86_64) and `ubuntu-24.04-arm`
-(aarch64). Caches: the source archive (content-addressed, re-verified on use) and ccache (key includes
-architecture, LLVM version, and a hash of the image, cache file, build script, and patches). Neither is
-needed for correctness. The release job runs only when requested and only if both architectures pass;
-it publishes the two tarballs and a `checksums` file under `llvm-musl-<version>-<short sha>`.
+(aarch64). Caches: the pinned source archives (content-addressed with both LLVM and musl versions,
+re-verified on use) and ccache (key includes architecture, LLVM version, and a hash of the image, cache
+file, build script, and patches). Neither is needed for correctness. The release job runs only when
+requested and only if both architectures pass; it publishes the two tarballs and a `checksums` file
+under `llvm-musl-<version>-<short sha>`, with the LLVM and musl versions in the release notes.
 
 ## Comparison with the previous bootstrap build (LLVM 23.1.2, x86_64)
 
-Measured on one 32-core, 60 GiB x86_64 Linux host with Docker; each build run once, no ccache. The
-aarch64 package is not measured locally (CI builds it natively). Baseline = commit 0dba9a6: LLVM 23.1.2
-built with the previous architecture (host tools, then a Clang self-bootstrap with stage-1 runtimes).
+Measured on one 32-core, 60 GiB x86_64 Linux host with Docker; each build run once, no ccache. These
+measurements predate the bundled musl libc. The aarch64 package is not measured locally (CI builds it
+natively). Baseline = commit 0dba9a6: LLVM 23.1.2 built with the previous architecture (host tools,
+then a Clang self-bootstrap with stage-1 runtimes).
 
 | | Bootstrap baseline | Single build |
 |---|---|---|

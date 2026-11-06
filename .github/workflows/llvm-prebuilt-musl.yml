@@ -28,29 +28,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The pinned version and source checksum live in llvm-source.env.
-      - name: Load pinned LLVM version
-        run: grep -E '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env >> "$GITHUB_ENV"
+      # The pinned versions and source checksums live in llvm-source.env and
+      # musl-source.env.
+      - name: Load pinned versions
+        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env >> "$GITHUB_ENV"
 
-      # Caches only save time; `make source` verifies the archive whatever the
+      # Caches only save time; `make source` verifies the archives whatever the
       # cache contained, and ccache never changes build results.
-      - name: Restore LLVM source archive
+      - name: Restore pinned source archives
         id: source-cache
         uses: actions/cache/restore@v4
         with:
           path: work/download
-          key: llvm-source-${{ env.LLVM_VERSION }}-${{ env.LLVM_SOURCE_SHA256 }}
+          key: sources-${{ env.LLVM_VERSION }}-${{ env.LLVM_SOURCE_SHA256 }}-${{ env.MUSL_VERSION }}-${{ env.MUSL_SOURCE_SHA256 }}
 
-      - name: Fetch and verify LLVM source
+      - name: Fetch and verify sources
         run: make source
 
-      - name: Save LLVM source archive
+      - name: Save pinned source archives
         if: steps.source-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: work/download
-          key: llvm-source-${{ env.LLVM_VERSION }}-${{ env.LLVM_SOURCE_SHA256 }}
+          key: sources-${{ env.LLVM_VERSION }}-${{ env.LLVM_SOURCE_SHA256 }}-${{ env.MUSL_VERSION }}-${{ env.MUSL_SOURCE_SHA256 }}
 
       - name: Compute ccache key
         run: |
@@ -117,8 +118,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Load pinned LLVM version
-        run: grep -E '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env >> "$GITHUB_ENV"
+      - name: Load pinned versions
+        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env >> "$GITHUB_ENV"
 
       - name: Download packages
         uses: actions/download-artifact@v4
@@ -141,4 +142,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$tag" \
-            --notes ""
+            --notes "LLVM/Clang ${LLVM_VERSION} with the static musl ${MUSL_VERSION} libc, for x86_64-linux-musl and aarch64-linux-musl."

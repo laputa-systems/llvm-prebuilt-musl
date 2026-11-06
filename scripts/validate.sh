@@ -2,18 +2,20 @@
 # Validate a built package the way a downstream user meets it.
 #
 #   usage: validate.sh <clang+llvm-...-linux-musl.tar.xz>
-#   environment: LLVM_VERSION, LLVM_ARCH; TESTS_DIR (default /tests)
+#   environment: LLVM_VERSION, MUSL_VERSION, LLVM_ARCH; TESTS_DIR (default /tests)
 #
-# Runs in the validation container (docker/validate.Dockerfile): musl's headers,
-# startup objects, and libc.a as the sysroot, and no compiler, linker, libstdc++
-# or libgcc. The package is extracted to a different absolute prefix than it was
-# installed at, and every tool is invoked by its package path. Failures print the
-# captured output of the failing command; the script exits nonzero if any check
-# fails. Test programs really run: a failing executable is a failure.
+# Runs in the validation container (docker/validate.Dockerfile): musl's headers
+# and dynamic loader, and no compiler, linker, libstdc++, or libgcc. The startup
+# objects and libc.a come from the package; musl-dev's GCC-built archives are
+# present so the checks can prove they are not what gets linked. The package is
+# extracted to a different absolute prefix than it was installed at, and every
+# tool is invoked by its package path. Failures print the captured output of the
+# failing command; the script exits nonzero if any check fails. Test programs
+# really run: a failing executable is a failure.
 set -uo pipefail
 
 TARBALL="${1:?usage: validate.sh <package.tar.xz>}"
-: "${LLVM_VERSION:?}" "${LLVM_ARCH:?}"
+: "${LLVM_VERSION:?}" "${MUSL_VERSION:?}" "${LLVM_ARCH:?}"
 TESTS="${TESTS_DIR:-/tests}"
 MAJOR="${LLVM_VERSION%%.*}"
 TRIPLE="${LLVM_ARCH}-linux-musl"
@@ -55,6 +57,14 @@ contains() {
 lacks() {
     if grep -qF -- "$3" <<<"$2"; then fail "$1 (found: $3)"; printf '%s\n' "$2" | indent; else pass "$1"; fi
 }
+# no_gcc <description> <file>: an object, archive, or executable whose .comment
+# sections name no GCC build. Archives are dumped member by member.
+no_gcc() {
+    local comments
+    comments=$("$READELF" -p .comment "$2" 2>&1)
+    if grep -qF 'GCC:' <<<"$comments"; then fail "$1: .comment names GCC"; printf '%s\n' "$comments" | indent
+    else pass "$1: no GCC in .comment"; fi
+}
 
 WORK=$(mktemp -d /tmp/validate.XXXXXX)
 PREFIX_PARENT=$(mktemp -d /opt/relocated.XXXXXX)
@@ -81,7 +91,9 @@ READELF="${TC}/bin/llvm-readelf"
 RES="${TC}/lib/clang/${MAJOR}"
 BUILTINS="${RES}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a"
 COMMON=(--target="$TRIPLE" --sysroot=/)
-CXXFLAGS=(-std=c++20 -O2 -Wall -Wextra -Werror)
+# The package's config selects --unwindlib=none, so programs that unwind ask
+# for the bundled libunwind explicitly.
+CXXFLAGS=(-std=c++20 -O2 -Wall -Wextra -Werror --unwindlib=libunwind)
 
 # Exact expected contents of the top-level directories. Anything missing or
 # extra is a deliberate-change signal, not something to wave through.
@@ -90,7 +102,7 @@ declare -A expected_entries=(
            llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-ranlib llvm-readelf llvm-readobj llvm-size llvm-strings
            llvm-strip llvm-symbolizer wasm-ld"
     [lib]="clang libLTO.so libLTO.so.${MAJOR}.1 libc++.a libc++abi.a libc++experimental.a libclang.so
-           libclang.so.${MAJOR}.1 libclang.so.${LLVM_VERSION} libunwind.a"
+           libclang.so.${MAJOR}.1 libclang.so.${LLVM_VERSION} libunwind.a musl"
     [include]="c++ clang-c llvm-c"
 )
 
@@ -106,12 +118,29 @@ for dir in bin lib include; do
         diff <(sorted "${expected_entries[$dir]}" | xargs -n1) <(listing "${TC}/${dir}" | xargs -n1) | indent
     fi
 done
+musl_entries="libc.a libc.so crt1.o crti.o crtn.o rcrt1.o Scrt1.o"
+if [ "$(listing "${TC}/lib/musl")" = "$(sorted "$musl_entries")" ]; then pass "lib/musl/ has exactly the expected entries"; else
+    fail "lib/musl/ entries differ from the expected set"
+    diff <(sorted "$musl_entries" | xargs -n1) <(listing "${TC}/lib/musl" | xargs -n1) | indent
+fi
+contains "lib/musl/libc.so links the system's musl loader through the sysroot" \
+    "$(cat "${TC}/lib/musl/libc.so")" "GROUP ( =/lib/ld-musl-${LLVM_ARCH}.so.1 )"
+verdict "lib/musl/libc.a is musl ${MUSL_VERSION}" \
+    grep -qxF -- "$MUSL_VERSION" <("${TC}/bin/llvm-strings" "${TC}/lib/musl/libc.a")
+unwind_variants="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
 for required in include/c++/v1/__config_site include/c++/v1/iostream include/c++/v1/cxxabi.h include/clang-c/Index.h \
                 include/llvm-c/lto.h "lib/clang/${MAJOR}/include/stddef.h" \
                 "lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a" \
                 "lib/clang/${MAJOR}/lib/linux/clang_rt.crtbegin-${LLVM_ARCH}.o" \
-                "lib/clang/${MAJOR}/lib/linux/clang_rt.crtend-${LLVM_ARCH}.o"; do
+                "lib/clang/${MAJOR}/lib/linux/clang_rt.crtend-${LLVM_ARCH}.o" \
+                "lib/clang/${MAJOR}/lib/linux/clang_rt.crtbegin.o" \
+                "lib/clang/${MAJOR}/lib/linux/clang_rt.crtend.o" \
+                lib/musl/libc.a lib/musl/libc.so lib/musl/crt1.o lib/musl/rcrt1.o lib/musl/Scrt1.o \
+                lib/musl/crti.o lib/musl/crtn.o; do
     verdict "present: ${required}" test -e "${TC}/${required}"
+done
+for name in $unwind_variants; do
+    verdict "present: lib/clang/${MAJOR}/lib/linux/${name}" test -e "${TC}/lib/clang/${MAJOR}/lib/linux/${name}"
 done
 unwanted=$(find "${TC}/lib" \( -name 'libclang_rt.*' ! -name 'libclang_rt.builtins-*' \) -o -name '*san*' -o -name '*i386*' \
     -o -name '*i686*' -o -name 'libc++.so*' -o -name 'libc++abi.so*' -o -name 'libunwind.so*' -o -name 'libLLVM*' \
@@ -178,7 +207,7 @@ pass "ELF audit covered ${elf_count} files"
 # (an x86-64 package must not carry i386 builtins, for example).
 section "Runtime archives"
 for archive in "lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a" lib/libc++.a lib/libc++abi.a \
-               lib/libunwind.a lib/libc++experimental.a; do
+               lib/libunwind.a lib/libc++experimental.a lib/musl/libc.a; do
     machines=$("$READELF" -h "${TC}/${archive}" 2>&1 | sed -n 's/^ *Machine: *//p' | sort -u)
     if [ -n "$machines" ] && [ "$(wc -l <<<"$machines")" -eq 1 ] && [[ "$machines" == *"$MACHINE"* ]]; then
         pass "${archive}: only ${MACHINE} objects"
@@ -188,6 +217,17 @@ for archive in "lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a
 done
 # libc++.a carries the libc++abi objects so that the driver's default -lc++ links.
 verdict "libc++.a contains the libc++abi objects" grep -q '__cxa_throw' <("${TC}/bin/llvm-nm" --defined-only "${TC}/lib/libc++.a" 2>&1)
+
+# The package must be a GCC-free toolchain input: every object in the bundled
+# libc, the unwinder, and the compiler-rt builtins was compiled by the shipped
+# clang, not by GCC (Alpine's musl-dev archives are GCC-built).
+section "Bundled runtimes are GCC-free"
+no_gcc lib/musl/libc.a "${TC}/lib/musl/libc.a"
+for obj in crt1.o rcrt1.o Scrt1.o crti.o crtn.o; do
+    no_gcc "lib/musl/${obj}" "${TC}/lib/musl/${obj}"
+done
+no_gcc lib/libunwind.a "${TC}/lib/libunwind.a"
+no_gcc "libclang_rt.builtins-${LLVM_ARCH}.a" "${TC}/lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a"
 
 # -- tools start and identify themselves -------------------------------------------
 section "Tools"
@@ -222,14 +262,21 @@ contains "resource directory is inside the package" "$("$CLANG" -print-resource-
 contains "libc++ headers come from the package" "$plan" "\"${TC}/bin/../include/c++/v1\""
 contains "linker is the package's ld.lld" "$plan" "\"${TC}/bin/ld.lld\""
 contains "libc++ is the default C++ library" "$plan" '"-lc++"'
-contains "libunwind is the default unwinder" "$plan" '"-lunwind"'
+lacks "no unwinder by default (--unwindlib=none)" "$plan" '"-lunwind"'
 contains "compiler-rt builtins are the default runtime" "$plan" "\"${BUILTINS}\""
 contains "compiler-rt startup files are used" "$plan" "\"${RES}/lib/linux/clang_rt.crtbegin-${LLVM_ARCH}.o\""
 contains "startup files end with compiler-rt's" "$plan" "\"${RES}/lib/linux/clang_rt.crtend-${LLVM_ARCH}.o\""
+contains "musl startup object comes from the package" "$plan" "\"${TC}/bin/../lib/musl/Scrt1.o\""
+contains "crti.o comes from the package" "$plan" "\"${TC}/bin/../lib/musl/crti.o\""
+contains "crtn.o comes from the package" "$plan" "\"${TC}/bin/../lib/musl/crtn.o\""
 contains "package lib/ is on the library path" "$plan" "\"-L${TC}/bin/../lib\""
+contains "package lib/musl/ is on the library path" "$plan" "\"-L${TC}/bin/../lib/musl\""
 lacks "no libstdc++" "$plan" "stdc++"
 lacks "no libgcc" "$plan" "-lgcc"
 lacks "no GCC installation" "$plan" "/usr/lib/gcc"
+# --unwindlib=libunwind is the documented opt-in for exceptions.
+unwind_plan=$("$CLANGXX" "${COMMON[@]}" --unwindlib=libunwind -### "${WORK}/probe.cpp" -o "${WORK}/probe" 2>&1)
+contains "--unwindlib=libunwind links the bundled unwinder" "$unwind_plan" '"-lunwind"'
 
 # -- programs that compile, link, and run ------------------------------------------
 # build_run <name> <expected-file> <compiler> <args...>: build, run natively, and
@@ -269,11 +316,25 @@ EXPLICIT=(-stdlib=libc++ --rtlib=compiler-rt --unwindlib=libunwind -fuse-ld=lld)
 section "C programs"
 build_run c-default "${TESTS}/c/hello.expected" "$CLANG" "${COMMON[@]}" -O2 "${TESTS}/c/hello.c" && expect_linkage c-default dynamic
 build_run c-static "${TESTS}/c/hello.expected" "$CLANG" "${COMMON[@]}" -O2 -static "${TESTS}/c/hello.c" && expect_linkage c-static static
+build_run c-static-pie "${TESTS}/c/hello.expected" "$CLANG" "${COMMON[@]}" -O2 -static-pie "${TESTS}/c/hello.c" && expect_linkage c-static-pie static
 build_run c-explicit "${TESTS}/c/hello.expected" "$CLANG" "${COMMON[@]}" -O2 --rtlib=compiler-rt -fuse-ld=lld "${TESTS}/c/hello.c"
 # No options at all: the compiler's own target and sysroot search.
 build_run c-bare "${TESTS}/c/hello.expected" "$CLANG" -O2 "${TESTS}/c/hello.c"
+# hello.c divides unsigned __int128, so these links pulled compiler-rt builtins
+# and the bundled libc; the container's musl-dev archives are GCC-built.
+for exe in c-default c-static c-static-pie c-explicit c-bare; do
+    no_gcc "$exe" "${WORK}/${exe}"
+done
 
 section "C++ programs (libc++, libc++abi, libunwind, compiler-rt)"
+# A C++ program that needs no unwinding links with the default config alone.
+printf 'plain C++\n' > "${WORK}/plain.expected"
+cat > "${WORK}/plain.cpp" <<'EOF'
+#include <cstdio>
+int main() { std::printf("plain C++\n"); return 0; }
+EOF
+build_run cxx-plain "${WORK}/plain.expected" "$CLANGXX" "${WORK}/plain.cpp" && expect_linkage cxx-plain dynamic
+no_gcc cxx-plain "${WORK}/cxx-plain"
 build_run cxx-default "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" "${CXXFLAGS[@]}" "${TESTS}/cxx/features.cpp" &&
     expect_linkage cxx-default dynamic
 build_run cxx-static "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" "${CXXFLAGS[@]}" -static "${TESTS}/cxx/features.cpp" &&
@@ -282,7 +343,7 @@ build_run cxx-explicit "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}
 build_run cxx-documented "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" "${CXXFLAGS[@]}" "${DOCUMENTED[@]}" "${TESTS}/cxx/features.cpp"
 build_run cxx-documented-static "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" "${CXXFLAGS[@]}" -static "${DOCUMENTED[@]}" "${TESTS}/cxx/features.cpp"
 build_run cxx-bare "${TESTS}/cxx/features.expected" "$CLANGXX" "${CXXFLAGS[@]}" "${TESTS}/cxx/features.cpp"
-build_run cxx-O0 "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" -std=c++20 -O0 -g "${TESTS}/cxx/features.cpp"
+build_run cxx-O0 "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" -std=c++20 -O0 -g --unwindlib=libunwind "${TESTS}/cxx/features.cpp"
 # Found through PATH, the way users invoke it.
 build_run cxx-path "${TESTS}/cxx/features.expected" env PATH="${TC}/bin:${PATH}" clang++ "${COMMON[@]}" "${CXXFLAGS[@]}" "${TESTS}/cxx/features.cpp"
 
@@ -305,7 +366,7 @@ main_calls_math() {  # does main's disassembly mention scale_and_offset? (exe)
 for mode in dynamic static; do
     dir="${WORK}/lto-${mode}"
     flags=(-flto=thin)
-    linkflags=(-flto=thin -Rpass=inline)
+    linkflags=(-flto=thin -Rpass=inline --unwindlib=libunwind)
     [ "$mode" = static ] && linkflags+=(-static)
     if ! out=$(lto_compile "$dir" "${flags[@]}" 2>&1); then fail "lto-${mode}: compile"; printf '%s\n' "$out" | indent; continue; fi
     magic=$(od -An -tx1 -N4 "${dir}/lto_math.o" | tr -d ' \n')
@@ -324,7 +385,7 @@ for mode in dynamic static; do
     esac
 done
 # Control: without LTO the call survives, so the check above can fail.
-if lto_compile "${WORK}/nolto" && "$CLANGXX" "${COMMON[@]}" "${WORK}"/nolto/*.o -o "${WORK}/nolto/app" 2>&1 &&
+if lto_compile "${WORK}/nolto" && "$CLANGXX" "${COMMON[@]}" --unwindlib=libunwind "${WORK}"/nolto/*.o -o "${WORK}/nolto/app" 2>&1 &&
    main_calls_math "${WORK}/nolto/app"; then pass "control: without LTO main calls scale_and_offset"; else fail "control build without LTO"; fi
 
 # -- LLVM utilities and zlib ------------------------------------------------------
