@@ -116,7 +116,8 @@ for dir in bin lib include; do
         diff <(sorted "${expected_entries[$dir]}" | xargs -n1) <(listing "${TC}/${dir}" | xargs -n1) | indent
     fi
 done
-musl_entries="libc.a libc.so crt1.o crti.o crtn.o rcrt1.o Scrt1.o"
+musl_stubs="libm.a librt.a libpthread.a libcrypt.a libutil.a libxnet.a libresolv.a libdl.a"
+musl_entries="libc.a libc.so crt1.o crti.o crtn.o rcrt1.o Scrt1.o ${musl_stubs}"
 if [ "$(listing "${TC}/lib/musl")" = "$(sorted "$musl_entries")" ]; then pass "lib/musl/ has exactly the expected entries"; else
     fail "lib/musl/ entries differ from the expected set"
     diff <(sorted "$musl_entries" | xargs -n1) <(listing "${TC}/lib/musl" | xargs -n1) | indent
@@ -125,6 +126,10 @@ contains "lib/musl/libc.so links the system's musl loader through the sysroot" \
     "$(cat "${TC}/lib/musl/libc.so")" "GROUP ( =/lib/ld-musl-${LLVM_ARCH}.so.1 )"
 verdict "lib/musl/libc.a is musl ${MUSL_VERSION}" \
     grep -qxF -- "$MUSL_VERSION" <("${TC}/bin/llvm-strings" "${TC}/lib/musl/libc.a")
+for stub in $musl_stubs; do
+    verdict "lib/musl/${stub} is an empty archive" \
+        test "$("${TC}/bin/llvm-ar" t "${TC}/lib/musl/${stub}" | wc -l)" -eq 0 -a -s "${TC}/lib/musl/${stub}"
+done
 unwind_variants="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
 for required in include/c++/v1/__config_site include/c++/v1/iostream include/c++/v1/cxxabi.h include/clang-c/Index.h \
                 include/llvm-c/lto.h "lib/clang/${MAJOR}/include/stddef.h" \
@@ -344,6 +349,32 @@ build_run cxx-bare "${TESTS}/cxx/features.expected" "$CLANGXX" "${CXXFLAGS[@]}" 
 build_run cxx-O0 "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" -std=c++20 -O0 -g "${TESTS}/cxx/features.cpp"
 # Found through PATH, the way users invoke it.
 build_run cxx-path "${TESTS}/cxx/features.expected" env PATH="${TC}/bin:${PATH}" clang++ "${COMMON[@]}" "${CXXFLAGS[@]}" "${TESTS}/cxx/features.cpp"
+
+section "Static links against a headers-only sysroot"
+HEADERS_ONLY="${WORK}/headers-only"
+mkdir -p "${HEADERS_ONLY}/usr"
+ln -s /usr/include "${HEADERS_ONLY}/usr/include"
+ISOLATED=(--target="$TRIPLE" --sysroot="$HEADERS_ONLY")
+build_run cxx-static-headers-only "${TESTS}/cxx/features.expected" "$CLANGXX" "${ISOLATED[@]}" "${CXXFLAGS[@]}" -static "${TESTS}/cxx/features.cpp" &&
+    expect_linkage cxx-static-headers-only static
+printf 'unwound\n' > "${WORK}/unwind.expected"
+cat > "${WORK}/unwind.c" <<'EOF'
+#include <stdio.h>
+#include <unwind.h>
+static _Unwind_Reason_Code visit(struct _Unwind_Context *context, void *count) {
+    (void)context;
+    ++*(int *)count;
+    return _URC_NO_REASON;
+}
+int main(void) {
+    int frames = 0;
+    _Unwind_Backtrace(visit, &frames);
+    puts(frames > 0 ? "unwound" : "no frames");
+    return 0;
+}
+EOF
+build_run c-static-unwind-headers-only "${WORK}/unwind.expected" "$CLANG" "${ISOLATED[@]}" -O2 -static --unwindlib=libunwind "${WORK}/unwind.c" &&
+    expect_linkage c-static-unwind-headers-only static
 
 # -- ThinLTO ----------------------------------------------------------------------
 section "ThinLTO (multi-translation-unit)"

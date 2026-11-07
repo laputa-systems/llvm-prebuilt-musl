@@ -26,6 +26,7 @@ them.
 | `include/c++/v1/` | libc++ headers, including the generated `__config_site` |
 | `lib/libc++.a`, `lib/libc++abi.a`, `lib/libunwind.a`, `lib/libc++experimental.a` | Static C++ runtime libraries (`libc++.a` also contains the libc++abi objects) |
 | `lib/musl/libc.a`, `lib/musl/{crt1,rcrt1,Scrt1,crti,crtn}.o` | musl 1.2.6 static libc and startup objects, built by the packaged clang with compiler-rt |
+| `lib/musl/lib{m,rt,pthread,crypt,util,xnet,resolv,dl}.a` | musl's empty stub archives (everything lives in `libc.a`); they satisfy the dependent-library entries in `libunwind.a` and `-l` flags such as `-ldl` without a musl-dev sysroot |
 | `lib/musl/libc.so` | Link-time script naming the system's `/lib/ld-musl-<arch>.so.1` for dynamic links; static links take `libc.a` |
 
 Not included: musl headers or a target sysroot, sanitizers, shared C++
@@ -103,7 +104,9 @@ The libc is musl 1.2.6, built out-of-tree from the upstream release tarball
 with the packaged clang, `llvm-ar`, `llvm-ranlib`, and compiler-rt builtins
 (`--disable-shared`, no GCC anywhere in the build). The version and tarball
 sha256 are pinned in [`musl-source.env`](musl-source.env), and the release notes
-repeat the version. Only the static libc and startup objects are shipped; the
+repeat the version. Only the static libc, the startup objects, and musl's empty stub archives
+(`libm.a`, `librt.a`, `libpthread.a`, `libcrypt.a`, `libutil.a`, `libxnet.a`,
+`libresolv.a`, `libdl.a`, created with `llvm-ar`) are shipped; the
 target's headers come from the consumer, and the dynamic loader is the system's.
 
 ## Patches

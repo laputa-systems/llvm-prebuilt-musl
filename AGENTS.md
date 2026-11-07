@@ -77,6 +77,7 @@ cmake/llvm-musl-distribution.cmake Initial CMake cache: what is built, how, and 
 scripts/fetch-llvm-source.sh       Download, verify (fresh or cached), extract the LLVM source archive
 scripts/fetch-musl-source.sh       Download, verify (fresh or cached), extract the musl source archive
 scripts/apply-patches.sh           Strict, repeatable application of patches/*.patch
+scripts/install-musl-stubs.sh      Creates musl's empty stub archives in lib/musl (build.sh; validate.sh checks them)
 scripts/build.sh                   configure -> compiler -> regressions -> distribution -> musl -> package
 scripts/run-optimizer-regressions.sh  Runs repros/*.ll RUN lines with the new opt and FileCheck
 scripts/validate.sh                Installed-package validation (runs in the clean container)
@@ -130,7 +131,10 @@ patches/                           Local LLVM patch and its documentation
   with the installed package's own `clang`, `llvm-ar`, and `llvm-ranlib`, and
   `LIBCC=<resource dir>/libclang_rt.builtins-<arch>.a`: `./configure --disable-shared --target=<arch>`,
   then `make`. `libc.a` and `crt1.o`, `rcrt1.o`, `Scrt1.o`, `crti.o`, `crtn.o` are installed to
-  `lib/musl/`; no musl headers are shipped. Because a directory holding only `libc.a` would also win
+  `lib/musl/`, next to musl's empty stub archives (`libm.a`, `librt.a`, `libpthread.a`, `libcrypt.a`,
+  `libutil.a`, `libxnet.a`, `libresolv.a`, `libdl.a`) made by `scripts/install-musl-stubs.sh` with the
+  packaged `llvm-ar`: `libunwind.a` carries dependent-library entries for `dl` and `pthread`, and lld fails
+  the link unless it finds those files, which a headers-only sysroot does not provide; no musl headers are shipped. Because a directory holding only `libc.a` would also win
   `-lc` for ordinary links, `lib/musl/libc.so` is a generated linker script,
   `GROUP ( =/lib/ld-musl-<arch>.so.1 )`: lld expands `=` against `--sysroot`, so default links stay
   dynamically linked to the system loader and `-static`/`-static-pie` take the archive. The musl build
@@ -177,6 +181,8 @@ is caught:
 - Driver defaults (`-###`): libc++, compiler-rt builtins and startup files, `-lunwind` for `clang++`
   and none for `clang`, the package's musl startup objects and
   `libc.a`, the package's `ld.lld`, no libstdc++/libgcc/GCC paths.
+- Static C++ and `--unwindlib=libunwind` C links against a headers-only `--sysroot` (a symlink to musl's
+  headers, no `/usr/lib`), so the container's musl-dev stub archives cannot mask a missing `lib/musl` stub.
 - C and C++ programs are compiled, linked, and **run**: default, explicit, documented (README), fully
   static, static-PIE, no-option, and `PATH`-lookup invocations. C covers `unsigned __int128` division
   through compiler-rt builtins; C++ covers exceptions with RAII unwinding, threads and `thread_local`

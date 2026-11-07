@@ -121,8 +121,8 @@ cmake --build "$BUILD" --target install-distribution
 # -- musl -------------------------------------------------------------------------
 # The bundled libc is built by the package's own clang and compiler-rt, with no
 # GCC-built object in it, and out of tree so the pinned source stays pristine.
-# Only libc.a and the startup objects are shipped: target headers stay the
-# consumer's. The config files are written afterwards, so this phase sees the
+# Only libc.a, the startup objects, and musl's empty stub archives are shipped:
+# target headers stay the consumer's. The config files are written afterwards, so this phase sees the
 # driver's installed defaults.
 phase "musl libc ${MUSL_VERSION}"
 MUSL_BUILD="${STATE}/musl-build"
@@ -142,6 +142,7 @@ install -m 644 "${MUSL_BUILD}/lib/libc.a" "${PREFIX}/lib/musl/libc.a"
 for obj in crt1.o rcrt1.o Scrt1.o crti.o crtn.o; do
     install -m 644 "${MUSL_BUILD}/lib/${obj}" "${PREFIX}/lib/musl/${obj}"
 done
+"${REPO}/scripts/install-musl-stubs.sh" "${PREFIX}/bin/llvm-ar" "${PREFIX}/lib/musl"
 # A directory holding only libc.a would win -lc for ordinary links too, turning
 # every default link into a static-libc one. The script keeps -lc dynamic, and
 # '=' makes lld resolve the loader inside --sysroot; -static and -static-pie
