@@ -91,9 +91,7 @@ READELF="${TC}/bin/llvm-readelf"
 RES="${TC}/lib/clang/${MAJOR}"
 BUILTINS="${RES}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a"
 COMMON=(--target="$TRIPLE" --sysroot=/)
-# The package's config selects --unwindlib=none, so programs that unwind ask
-# for the bundled libunwind explicitly.
-CXXFLAGS=(-std=c++20 -O2 -Wall -Wextra -Werror --unwindlib=libunwind)
+CXXFLAGS=(-std=c++20 -O2 -Wall -Wextra -Werror)
 
 # Exact expected contents of the top-level directories. Anything missing or
 # extra is a deliberate-change signal, not something to wave through.
@@ -262,7 +260,7 @@ contains "resource directory is inside the package" "$("$CLANG" -print-resource-
 contains "libc++ headers come from the package" "$plan" "\"${TC}/bin/../include/c++/v1\""
 contains "linker is the package's ld.lld" "$plan" "\"${TC}/bin/ld.lld\""
 contains "libc++ is the default C++ library" "$plan" '"-lc++"'
-lacks "no unwinder by default (--unwindlib=none)" "$plan" '"-lunwind"'
+contains "clang++ links the bundled unwinder by default" "$plan" '"-lunwind"'
 contains "compiler-rt builtins are the default runtime" "$plan" "\"${BUILTINS}\""
 contains "compiler-rt startup files are used" "$plan" "\"${RES}/lib/linux/clang_rt.crtbegin-${LLVM_ARCH}.o\""
 contains "startup files end with compiler-rt's" "$plan" "\"${RES}/lib/linux/clang_rt.crtend-${LLVM_ARCH}.o\""
@@ -274,9 +272,9 @@ contains "package lib/musl/ is on the library path" "$plan" "\"-L${TC}/bin/../li
 lacks "no libstdc++" "$plan" "stdc++"
 lacks "no libgcc" "$plan" "-lgcc"
 lacks "no GCC installation" "$plan" "/usr/lib/gcc"
-# --unwindlib=libunwind is the documented opt-in for exceptions.
-unwind_plan=$("$CLANGXX" "${COMMON[@]}" --unwindlib=libunwind -### "${WORK}/probe.cpp" -o "${WORK}/probe" 2>&1)
-contains "--unwindlib=libunwind links the bundled unwinder" "$unwind_plan" '"-lunwind"'
+printf 'int main(void) { return 0; }\n' > "${WORK}/probe.c"
+c_plan=$("$CLANG" "${COMMON[@]}" -### "${WORK}/probe.c" -o "${WORK}/probe" 2>&1)
+lacks "clang links no unwinder by default" "$c_plan" '"-lunwind"'
 
 # -- programs that compile, link, and run ------------------------------------------
 # build_run <name> <expected-file> <compiler> <args...>: build, run natively, and
@@ -343,7 +341,7 @@ build_run cxx-explicit "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}
 build_run cxx-documented "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" "${CXXFLAGS[@]}" "${DOCUMENTED[@]}" "${TESTS}/cxx/features.cpp"
 build_run cxx-documented-static "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" "${CXXFLAGS[@]}" -static "${DOCUMENTED[@]}" "${TESTS}/cxx/features.cpp"
 build_run cxx-bare "${TESTS}/cxx/features.expected" "$CLANGXX" "${CXXFLAGS[@]}" "${TESTS}/cxx/features.cpp"
-build_run cxx-O0 "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" -std=c++20 -O0 -g --unwindlib=libunwind "${TESTS}/cxx/features.cpp"
+build_run cxx-O0 "${TESTS}/cxx/features.expected" "$CLANGXX" "${COMMON[@]}" -std=c++20 -O0 -g "${TESTS}/cxx/features.cpp"
 # Found through PATH, the way users invoke it.
 build_run cxx-path "${TESTS}/cxx/features.expected" env PATH="${TC}/bin:${PATH}" clang++ "${COMMON[@]}" "${CXXFLAGS[@]}" "${TESTS}/cxx/features.cpp"
 
@@ -366,7 +364,7 @@ main_calls_math() {  # does main's disassembly mention scale_and_offset? (exe)
 for mode in dynamic static; do
     dir="${WORK}/lto-${mode}"
     flags=(-flto=thin)
-    linkflags=(-flto=thin -Rpass=inline --unwindlib=libunwind)
+    linkflags=(-flto=thin -Rpass=inline)
     [ "$mode" = static ] && linkflags+=(-static)
     if ! out=$(lto_compile "$dir" "${flags[@]}" 2>&1); then fail "lto-${mode}: compile"; printf '%s\n' "$out" | indent; continue; fi
     magic=$(od -An -tx1 -N4 "${dir}/lto_math.o" | tr -d ' \n')
@@ -385,7 +383,7 @@ for mode in dynamic static; do
     esac
 done
 # Control: without LTO the call survives, so the check above can fail.
-if lto_compile "${WORK}/nolto" && "$CLANGXX" "${COMMON[@]}" --unwindlib=libunwind "${WORK}"/nolto/*.o -o "${WORK}/nolto/app" 2>&1 &&
+if lto_compile "${WORK}/nolto" && "$CLANGXX" "${COMMON[@]}" "${WORK}"/nolto/*.o -o "${WORK}/nolto/app" 2>&1 &&
    main_calls_math "${WORK}/nolto/app"; then pass "control: without LTO main calls scale_and_offset"; else fail "control build without LTO"; fi
 
 # -- LLVM utilities and zlib ------------------------------------------------------

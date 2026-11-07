@@ -15,7 +15,7 @@ them.
 | Path | What |
 |------|------|
 | `bin/clang`, `bin/clang++`, `bin/clang-23`, `bin/clang-cl`, `bin/clang-cpp` | C/C++ compiler; defaults to the bundled libc++, compiler-rt, and lld |
-| `bin/clang.cfg`, `bin/clang++.cfg` | Driver configuration: select `ld.lld`, compiler-rt, and no implicit unwinder; search the package's `lib/` and `lib/musl/` |
+| `bin/clang.cfg`, `bin/clang++.cfg` | Driver configuration: select `ld.lld` and compiler-rt, the bundled libunwind for `clang++` and no implicit unwinder for `clang`; search the package's `lib/` and `lib/musl/` |
 | `bin/lld`, `bin/ld.lld`, `bin/ld64.lld`, `bin/lld-link`, `bin/wasm-ld` | LLVM linker |
 | `bin/llvm-{ar,nm,objcopy,objdump,ranlib,readelf,readobj,size,strings,strip,symbolizer}` | Binary utilities |
 | `lib/libclang.so`, `include/clang-c/` | Musl-linked libclang C API library and headers |
@@ -58,11 +58,12 @@ clang++ --target=aarch64-linux-musl --sysroot=/path/to/musl-sysroot hello.cpp -o
 
 Add `-static` or `-static-pie` for a fully static executable linked with the
 bundled `libc.a`. The defaults are libc++ (`-stdlib=libc++`), compiler-rt
-(`--rtlib=compiler-rt`), no implicit unwinder (`--unwindlib=none`), and the
-bundled lld (`-fuse-ld=lld`, from `clang.cfg`); the headers and static archives
-come from the package. C++ programs that throw or catch must add
-`--unwindlib=libunwind` (or `-lunwind`) to link the bundled libunwind, as the
-explicit forms below do.
+(`--rtlib=compiler-rt`), and the bundled lld (`-fuse-ld=lld`); the headers and
+static archives come from the package. `clang++` links the bundled libunwind
+(`--unwindlib=libunwind`), which libc++abi's exception support needs. `clang`
+links no unwinder (`--unwindlib=none`), so C links and links for runtimes that
+bring their own unwinder, such as Rust's, stay free of it; a C program that
+unwinds adds `--unwindlib=libunwind`.
 
 Every default can also be spelled out. This explicit form is equivalent for
 programs that unwind and does not depend on `clang++.cfg`:

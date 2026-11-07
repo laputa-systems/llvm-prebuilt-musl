@@ -114,11 +114,12 @@ patches/                           Local LLVM patch and its documentation
   (`lib/libc++.a`, `lib/clang/23/lib/linux/libclang_rt.builtins-<arch>.a`, `include/c++/v1/__config_site`),
   independent of how a consumer spells the target triple. `COMPILER_RT_DEFAULT_TARGET_ONLY=ON` means an
   x86-64 package never contains i386 builtins. The generated `clang{,++}.cfg` select lld and compiler-rt,
-  set `--unwindlib=none`, and add `-B<CFGDIR>/../lib/musl -L<CFGDIR>/../lib/musl -L<CFGDIR>/../lib`
+  set `--unwindlib=libunwind` for `clang++` and `--unwindlib=none` for `clang`, and add
+  `-B<CFGDIR>/../lib/musl -L<CFGDIR>/../lib/musl -L<CFGDIR>/../lib`
   (the driver only searches per-target subdirectories on its own). `-B` is a driver option: it makes `crt1.o`,
   `Scrt1.o`, `rcrt1.o`, `crti.o`, and `crtn.o` resolve inside the package; `-L` makes `libc.a` the
-  static-libc choice. C++ programs that unwind pass `--unwindlib=libunwind`; the default link must not
-  add `-lunwind`.
+  static-libc choice. libc++abi references the unwinder, so a default `clang++` link must add
+  `-lunwind`; a default `clang` link must not, so C and Rust links keep their own unwinding choice.
   compiler-rt's `crtbegin`/`crtend` are installed with the builtins and are the real objects (an empty
   stub would lose `__dso_handle` and break C++ static destructors, which `tests/cxx/features.cpp`
   checks). The GCC names (`crtbegin{,S,T}.o`, `crtend{,S}.o`) and the non-arch names
@@ -173,8 +174,8 @@ is caught:
 - GCC-free provenance: `llvm-readelf -p .comment` over `libc.a`, its crt objects, `libunwind.a`, and
   the compiler-rt builtins contains no `GCC:` string; a linked static program's `.comment` must not
   either.
-- Driver defaults (`-###`): libc++, compiler-rt builtins and startup files, `--unwindlib=none` (no
-  `-lunwind` unless `--unwindlib=libunwind` is passed), the package's musl startup objects and
+- Driver defaults (`-###`): libc++, compiler-rt builtins and startup files, `-lunwind` for `clang++`
+  and none for `clang`, the package's musl startup objects and
   `libc.a`, the package's `ld.lld`, no libstdc++/libgcc/GCC paths.
 - C and C++ programs are compiled, linked, and **run**: default, explicit, documented (README), fully
   static, static-PIE, no-option, and `PATH`-lookup invocations. C covers `unsigned __int128` division

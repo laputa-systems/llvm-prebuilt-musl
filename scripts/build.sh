@@ -151,18 +151,20 @@ chmod 644 "${PREFIX}/lib/musl/libc.so"
 
 # -- package ----------------------------------------------------------------------
 phase "package"
-# Clang reads <bin>/<name>.cfg. Select the bundled lld and compiler-rt and leave
-# unwinding to the caller (programs that unwind pass --unwindlib=libunwind), and
+# Clang reads <bin>/<name>.cfg. Select the bundled lld and compiler-rt, and
 # search the flat lib/ (libc++.a, libc++abi.a, libunwind.a) and lib/musl/
 # (startup objects, libc.a). -B is a driver option: it makes the startup objects
 # resolve inside the package; on its own the driver searches only per-target
 # subdirectories. <CFGDIR> keeps the package relocatable, and the bracketed
-# arguments are not reported as unused when only compiling.
-for cfg in clang clang++; do
-    cat > "${PREFIX}/bin/${cfg}.cfg" <<'EOF'
+# arguments are not reported as unused when only compiling. libc++abi's
+# exception support references the unwinder, so clang++ links the bundled
+# libunwind; clang leaves unwinding to the caller, which keeps C and
+# foreign-runtime links (Rust brings its own unwinder) free of it.
+for cfg in clang:none clang++:libunwind; do
+    cat > "${PREFIX}/bin/${cfg%%:*}.cfg" <<EOF
 -fuse-ld=lld
 --rtlib=compiler-rt
---unwindlib=none
+--unwindlib=${cfg#*:}
 --start-no-unused-arguments
 -B<CFGDIR>/../lib/musl
 -L<CFGDIR>/../lib/musl
