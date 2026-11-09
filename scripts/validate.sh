@@ -243,6 +243,11 @@ contains "clang runs from the relocated prefix" "$out" "InstalledDir: ${TC}/bin"
 contains "clang picks up its config file" "$out" "Configuration file: ${TC}/bin/clang.cfg"
 out=$("${TC}/bin/ld.lld" --version 2>&1)
 contains "ld.lld reports version ${LLVM_VERSION}" "$out" "LLD ${LLVM_VERSION}"
+for tool in clang ld.lld; do
+    stack=$("$READELF" -lW "${TC}/bin/${tool}" | awk '$1 == "GNU_STACK" { print $6 }')
+    if [ "$((stack))" -ge 8388608 ]; then pass "${tool} asks musl for an 8 MiB thread stack"
+    else fail "${tool} thread stack is ${stack:-unset}; musl's 128 KiB default overflows lld's ThinLTO backends"; fi
+done
 for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-ranlib llvm-readelf llvm-readobj llvm-size llvm-strings \
             llvm-strip llvm-symbolizer; do
     if out=$("${TC}/bin/${tool}" --version 2>&1); then contains "${tool} reports LLVM ${LLVM_VERSION}" "$out" "${LLVM_VERSION}"
