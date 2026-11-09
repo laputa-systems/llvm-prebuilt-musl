@@ -17,7 +17,7 @@ Stage 1: build patched LLVM/Clang/LLD 23.1.5 ONCE ----> optimizer regressions (o
           |
           v
 Stage 1 runtimes (compiler-rt builtins, libc++, libc++abi, libunwind) by that clang,
-installed to work/<arch>/stage1; musl 1.2.6 and zlib built by that clang
+installed to work/<arch>/stage1; musl 1.2.6, zlib, and mimalloc built by that clang
           |
           v
 Stage 2: rebuild the shipped tools and the LLVM development libraries with stage 1's
@@ -75,12 +75,14 @@ A CI run (both native jobs) is slow and expensive. Dispatch it only after a clea
 ```
 llvm-source.env                    Pinned LLVM version + source sha256 (Makefile, scripts, CI)
 musl-source.env                    Pinned musl version + source sha256 for the bundled libc
+mimalloc-source.env                Pinned mimalloc version + source sha256 for the tools' allocator
 Makefile                           Thin entry points; derives Docker platform from LLVM_ARCH
 docker/build.Dockerfile            Alpine 3.23 build image (clang, lld, cmake, ninja, ccache, zlib-static, ...)
 docker/validate.Dockerfile         Clean consumer image: Alpine 3.24 musl-dev only, no compiler or linker
 cmake/llvm-musl-distribution.cmake Initial CMake cache: what is built, how, and the distribution components
 scripts/fetch-llvm-source.sh       Download, verify (fresh or cached), extract the LLVM source archive
 scripts/fetch-musl-source.sh       Download, verify (fresh or cached), extract the musl source archive
+scripts/fetch-mimalloc-source.sh   Download, verify (fresh or cached), extract the mimalloc source archive
 scripts/apply-patches.sh           Strict, repeatable application of patches/*.patch
 scripts/install-musl-stubs.sh      Creates musl's empty stub archives in lib/musl (build.sh; validate.sh checks them)
 scripts/build.sh                   configure -> compiler -> regressions -> distribution -> musl -> package
@@ -112,7 +114,12 @@ patches/                           Local LLVM patch and its documentation
   compiler (see the comparison below for the size and speed they cost).
 - **Linkage.** Stage 2's tools and libraries are built by stage 1's clang with `LLVM_ENABLE_LIBCXX=ON`
   and link libc++, libc++abi, libunwind, compiler-rt, the clang-built musl startup objects, and the
-  clang-built zlib statically; only musl's libc is dynamic. `scripts/check-purity.sh` enforces it in
+  clang-built zlib statically; only musl's libc is dynamic. The executables take the clang-built
+  `libmimalloc.a` (pinned in `mimalloc-source.env`) with `--whole-archive`, so mimalloc replaces musl's
+  malloc for the whole process: musl maps each large allocation group separately, and lld's ThinLTO
+  link of a browser exceeded the default `vm.max_map_count` (65530) and failed with `LLVM ERROR: out
+  of memory` while memory was free. `validate.sh` requires `clang` and `ld.lld` to report mimalloc's
+  process init. `scripts/check-purity.sh` enforces it in
   `build.sh` and `validate.sh`: musl-only `DT_NEEDED` and interpreter, no `GCC:` in `.comment`, no
   libstdc++ or GNU symbol versions. The dev package ships that `libz.a` because `llvm-config
   --system-libs` reports `-lz`, and Alpine's `libz.a` is GCC-built.

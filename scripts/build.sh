@@ -17,7 +17,7 @@
 #                write the compiler and development tarballs
 set -euo pipefail
 
-: "${LLVM_VERSION:?}" "${MUSL_VERSION:?}" "${ZLIB_VERSION:?}" "${LLVM_ARCH:?x86_64 or aarch64}"
+: "${LLVM_VERSION:?}" "${MUSL_VERSION:?}" "${ZLIB_VERSION:?}" "${MIMALLOC_VERSION:?}" "${LLVM_ARCH:?x86_64 or aarch64}"
 LLVM_PARALLEL_LINK_JOBS="${LLVM_PARALLEL_LINK_JOBS:-2}"
 LLVM_USE_CCACHE="${LLVM_USE_CCACHE:-0}"
 
@@ -25,6 +25,7 @@ REPO=/work/repo
 SRC=/work/src
 MUSL_SRC=/work/musl-src
 ZLIB_SRC=/work/zlib-src
+MIMALLOC_SRC=/work/mimalloc-src
 STATE=/work/state
 BUILD="${STATE}/build"
 NAME="clang+llvm-${LLVM_VERSION}-${LLVM_ARCH}-linux-musl"
@@ -70,6 +71,9 @@ musl_version_file="${MUSL_SRC}/VERSION"
     die "musl source tree is $(cat "$musl_version_file"), expected ${MUSL_VERSION}"
 grep -q "^#define ZLIB_VERSION \"${ZLIB_VERSION}\"" "${ZLIB_SRC}/zlib.h" 2>/dev/null ||
     die "${ZLIB_SRC} is not the zlib ${ZLIB_VERSION} source"
+mimalloc_version_define=$(printf '%d%02d%02d' $(echo "${MIMALLOC_VERSION}" | tr . ' '))
+grep -q "^#define MI_MALLOC_VERSION ${mimalloc_version_define} " "${MIMALLOC_SRC}/include/mimalloc.h" 2>/dev/null ||
+    die "${MIMALLOC_SRC} is not the mimalloc ${MIMALLOC_VERSION} source"
 
 runtime_dir="lib/clang/${LLVM_VERSION%%.*}/lib/linux"
 
@@ -224,6 +228,32 @@ cp -a "$ZLIB_SRC" "${STATE}/zlib-build"
 )
 [ -f "${ZLIB_PREFIX}/lib/libz.a" ] || die "zlib did not install"
 
+# musl's malloc maps each large allocation group separately, and a ThinLTO link of
+# a browser-sized program then exceeds the kernel's default vm.max_map_count of
+# 65530 and fails with "LLVM ERROR: out of memory" while memory is free. mimalloc
+# reserves large segments instead. Stage 2's executables take its static archive
+# whole, so it replaces musl's malloc for the process.
+phase "stage 1: mimalloc ${MIMALLOC_VERSION}"
+MIMALLOC_PREFIX="${STATE}/mimalloc"
+MIMALLOC_BUILD="${STATE}/mimalloc-build"
+rm -rf "$MIMALLOC_BUILD" "$MIMALLOC_PREFIX"
+cmake -G Ninja -S "$MIMALLOC_SRC" -B "$MIMALLOC_BUILD" -Wno-dev \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER="${STAGE1}/bin/clang" \
+    -DCMAKE_AR="${STAGE1}/bin/llvm-ar" \
+    -DCMAKE_RANLIB="${STAGE1}/bin/llvm-ranlib" \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DCMAKE_INSTALL_PREFIX="$MIMALLOC_PREFIX" \
+    -DMI_LIBC_MUSL=ON \
+    -DMI_OVERRIDE=ON \
+    -DMI_BUILD_SHARED=OFF \
+    -DMI_BUILD_OBJECT=OFF \
+    -DMI_BUILD_TESTS=OFF \
+    -DMI_INSTALL_TOPLEVEL=ON
+cmake --build "$MIMALLOC_BUILD" --target install
+MIMALLOC_ARCHIVE="${MIMALLOC_PREFIX}/lib/libmimalloc.a"
+[ -f "$MIMALLOC_ARCHIVE" ] || die "mimalloc did not install"
+
 # -- stage 2 ----------------------------------------------------------------------
 # The shipped tools and the development libraries are rebuilt by stage 1's clang
 # against libc++, libc++abi, libunwind, compiler-rt, and the clang-built musl
@@ -243,7 +273,7 @@ CMAKE_ARGS2=(
     -DZLIB_LIBRARY_RELEASE="${ZLIB_PREFIX}/lib/libz.a"
     -DZLIB_LIBRARY_DEBUG="${ZLIB_PREFIX}/lib/libz.a"
     -DZLIB_INCLUDE_DIR="${ZLIB_PREFIX}/include"
-    -DCMAKE_EXE_LINKER_FLAGS=-Wl,-z,stack-size=${TOOL_THREAD_STACK_BYTES}
+    "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-z,stack-size=${TOOL_THREAD_STACK_BYTES} -Wl,--whole-archive ${MIMALLOC_ARCHIVE} -Wl,--no-whole-archive"
     -DCMAKE_SHARED_LINKER_FLAGS=
     -DCMAKE_MODULE_LINKER_FLAGS=
 )
@@ -254,7 +284,7 @@ config2_id=$({
     cat "${REPO}/cmake/llvm-musl-distribution.cmake"
     printf '%s\n' "${CMAKE_ARGS2[@]}"
     "${STAGE1}/bin/clang" --version
-    sha256sum "${STAGE1}/lib/libc++.a" "${STAGE1}/lib/musl/libc.a" "${ZLIB_PREFIX}/lib/libz.a"
+    sha256sum "${STAGE1}/lib/libc++.a" "${STAGE1}/lib/musl/libc.a" "${ZLIB_PREFIX}/lib/libz.a" "$MIMALLOC_ARCHIVE"
 } | sha256sum | cut -d' ' -f1)
 if [ "$(cat "${BUILD2}/.config-id" 2>/dev/null)" != "$config2_id" ]; then
     echo "Configuring a fresh stage 2 build tree"

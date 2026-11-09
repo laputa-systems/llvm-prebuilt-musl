@@ -248,6 +248,10 @@ for tool in clang ld.lld; do
     if [ "$((stack))" -ge 8388608 ]; then pass "${tool} asks musl for an 8 MiB thread stack"
     else fail "${tool} thread stack is ${stack:-unset}; musl's 128 KiB default overflows lld's ThinLTO backends"; fi
 done
+for tool in clang ld.lld; do
+    out=$(MIMALLOC_VERBOSE=1 "${TC}/bin/${tool}" --version 2>&1)
+    contains "${tool} allocates through mimalloc, not musl's malloc" "$out" "mimalloc: process init"
+done
 for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-ranlib llvm-readelf llvm-readobj llvm-size llvm-strings \
             llvm-strip llvm-symbolizer; do
     if out=$("${TC}/bin/${tool}" --version 2>&1); then contains "${tool} reports LLVM ${LLVM_VERSION}" "$out" "${LLVM_VERSION}"

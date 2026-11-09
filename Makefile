@@ -10,6 +10,7 @@
 include llvm-source.env
 include musl-source.env
 include zlib-source.env
+include mimalloc-source.env
 
 LLVM_ARCH ?= $(shell uname -m)
 ARCH := $(patsubst amd64,x86_64,$(patsubst arm64,aarch64,$(LLVM_ARCH)))
@@ -28,6 +29,8 @@ LLVM_DIR          ?= $(WORK_DIR)/llvm-project-$(LLVM_VERSION)
 MUSL_DIR          ?= $(WORK_DIR)/musl-$(MUSL_VERSION)
 ZLIB_DIR          ?= $(WORK_DIR)/zlib-$(ZLIB_VERSION)
 ZLIB_DOWNLOAD_DIR ?= $(LLVM_DOWNLOAD_DIR)
+MIMALLOC_DIR      ?= $(WORK_DIR)/mimalloc-$(MIMALLOC_VERSION)
+MIMALLOC_DOWNLOAD_DIR ?= $(LLVM_DOWNLOAD_DIR)
 LLVM_DOWNLOAD_DIR ?= $(WORK_DIR)/download
 MUSL_DOWNLOAD_DIR ?= $(LLVM_DOWNLOAD_DIR)
 CCACHE_HOST_DIR   ?= $(WORK_DIR)/ccache
@@ -37,6 +40,7 @@ STATE_DIR         := $(WORK_DIR)/$(ARCH)
 export LLVM_VERSION LLVM_SOURCE_SHA256 LLVM_DIR LLVM_DOWNLOAD_DIR
 export MUSL_VERSION MUSL_SOURCE_SHA256 MUSL_DIR MUSL_DOWNLOAD_DIR
 export ZLIB_VERSION ZLIB_SOURCE_SHA256 ZLIB_DIR ZLIB_DOWNLOAD_DIR
+export MIMALLOC_VERSION MIMALLOC_SOURCE_SHA256 MIMALLOC_DIR MIMALLOC_DOWNLOAD_DIR
 
 PACKAGE        := clang+llvm-$(LLVM_VERSION)-$(ARCH)-linux-musl
 BUILD_IMAGE    := llvm-prebuilt-musl-build:$(ARCH)
@@ -51,6 +55,7 @@ source:
 	scripts/fetch-llvm-source.sh
 	scripts/fetch-musl-source.sh
 	scripts/fetch-zlib-source.sh
+	scripts/fetch-mimalloc-source.sh
 
 build-image:
 	docker build --platform $(DOCKER_PLATFORM) -f docker/build.Dockerfile -t $(BUILD_IMAGE) docker
@@ -67,12 +72,14 @@ build: source build-image
 		-v "$(LLVM_DIR):/work/src" \
 		-v "$(MUSL_DIR):/work/musl-src:ro" \
 		-v "$(ZLIB_DIR):/work/zlib-src:ro" \
+		-v "$(MIMALLOC_DIR):/work/mimalloc-src:ro" \
 		-v "$(STATE_DIR):/work/state" \
 		-v "$(CCACHE_HOST_DIR):/ccache" \
 		-e HOME=/tmp \
 		-e LLVM_VERSION=$(LLVM_VERSION) \
 		-e MUSL_VERSION=$(MUSL_VERSION) \
 		-e ZLIB_VERSION=$(ZLIB_VERSION) \
+		-e MIMALLOC_VERSION=$(MIMALLOC_VERSION) \
 		-e LLVM_ARCH=$(ARCH) \
 		-e LLVM_USE_CCACHE=$(USE_CCACHE) \
 		-e LLVM_PARALLEL_LINK_JOBS=$(LLVM_PARALLEL_LINK_JOBS) \
@@ -111,4 +118,5 @@ distclean: clean
 	test "$(LLVM_DIR)" != "$(WORK_DIR)/llvm-project-$(LLVM_VERSION)" || rm -rf "$(LLVM_DIR)"
 	test "$(MUSL_DIR)" != "$(WORK_DIR)/musl-$(MUSL_VERSION)" || rm -rf "$(MUSL_DIR)"
 	test "$(ZLIB_DIR)" != "$(WORK_DIR)/zlib-$(ZLIB_VERSION)" || rm -rf "$(ZLIB_DIR)"
+	test "$(MIMALLOC_DIR)" != "$(WORK_DIR)/mimalloc-$(MIMALLOC_VERSION)" || rm -rf "$(MIMALLOC_DIR)"
 	-docker rmi $(BUILD_IMAGE) $(VALIDATE_IMAGE)

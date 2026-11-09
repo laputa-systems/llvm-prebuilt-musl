@@ -8,7 +8,10 @@ their own architecture and contain both the X86 and AArch64 compiler backends.
 The tools and shared libraries are dynamically linked against musl and nothing
 else (`libc.musl-<arch>.so.1`). They are built in two stages so that nothing
 shipped contains GNU runtime code: libc++, libc++abi, libunwind, compiler-rt,
-and a zlib built by the same clang are linked into them statically. No glibc,
+and a zlib built by the same clang are linked into them statically. The
+executables also link mimalloc 2.5.2, built by the same clang, as their
+allocator in place of musl's malloc, so a large ThinLTO link stays far below
+the kernel's default `vm.max_map_count`. No glibc,
 libgcc, libgcc_s, libstdc++, or `libz.so` is needed to run them, and
 `scripts/check-purity.sh` fails the build and validation if any ELF file or
 archive in either package names GCC in its `.comment`, links or references a GNU

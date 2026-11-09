@@ -31,7 +31,7 @@ jobs:
       # The pinned versions and source checksums live in llvm-source.env and
       # musl-source.env.
       - name: Load pinned versions
-        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env zlib-source.env >> "$GITHUB_ENV"
+        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env zlib-source.env mimalloc-source.env >> "$GITHUB_ENV"
 
       # Caches only save time; `make source` verifies the archives whatever the
       # cache contained, and ccache never changes build results.
@@ -55,7 +55,7 @@ jobs:
 
       - name: Compute ccache key
         run: |
-          echo "CCACHE_KEY=ccache-v3-${{ matrix.arch }}-${{ env.LLVM_VERSION }}-${{ hashFiles('docker/build.Dockerfile', 'cmake/llvm-musl-distribution.cmake', 'scripts/build.sh', 'patches/*.patch', 'zlib-source.env') }}" >> "$GITHUB_ENV"
+          echo "CCACHE_KEY=ccache-v3-${{ matrix.arch }}-${{ env.LLVM_VERSION }}-${{ hashFiles('docker/build.Dockerfile', 'cmake/llvm-musl-distribution.cmake', 'scripts/build.sh', 'patches/*.patch', 'zlib-source.env', 'mimalloc-source.env') }}" >> "$GITHUB_ENV"
 
       - name: Restore ccache
         id: ccache
@@ -121,7 +121,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Load pinned versions
-        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env zlib-source.env >> "$GITHUB_ENV"
+        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env zlib-source.env mimalloc-source.env >> "$GITHUB_ENV"
 
       - name: Download packages
         uses: actions/download-artifact@v4
