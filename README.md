@@ -6,9 +6,13 @@ startup objects, built by the packaged clang with compiler-rt, so a program can
 be linked against a GCC-free musl without building one first. Packages target
 their own architecture and contain both the X86 and AArch64 compiler backends.
 The tools and shared libraries are dynamically linked against musl and nothing
-else (`libc.musl-<arch>.so.1`); libstdc++, libgcc, and zlib are linked into
-them statically, so no GNU runtime libraries or `libz.so` are needed to run
-them.
+else (`libc.musl-<arch>.so.1`). They are built in two stages so that nothing
+shipped contains GNU runtime code: libc++, libc++abi, libunwind, compiler-rt,
+and a zlib built by the same clang are linked into them statically. No glibc,
+libgcc, libgcc_s, libstdc++, or `libz.so` is needed to run them, and
+`scripts/check-purity.sh` fails the build and validation if any ELF file or
+archive in either package names GCC in its `.comment`, links or references a GNU
+runtime, or needs anything but musl.
 
 ## Artifact Contents
 
@@ -30,8 +34,29 @@ them.
 | `lib/musl/libc.so` | Link-time script naming the system's `/lib/ld-musl-<arch>.so.1` for dynamic links; static links take `libc.a` |
 
 Not included: musl headers or a target sysroot, sanitizers, shared C++
-runtimes, clang-tools-extra, CMake exports and other LLVM development files,
-libxml2, zstd, and terminfo.
+runtimes, clang-tools-extra, libxml2, zstd, and terminfo. The LLVM development
+files are in the separate development package.
+
+## Development package
+
+`clang+llvm-<version>-<arch>-linux-musl-dev.tar.xz` holds `bin/llvm-config`, the
+static LLVM component libraries for the X86 and AArch64 targets, `include/llvm`,
+`include/llvm-c`, the CMake exports under `lib/cmake/llvm`, and the
+clang-built static zlib (`lib/libz.a`, `include/zlib.h`) that
+`llvm-config --system-libs` names as `-lz`. Its top-level
+directory matches the compiler package, so extract both into the same place:
+
+```sh
+tar xf clang+llvm-23.1.5-aarch64-linux-musl.tar.xz
+tar xf clang+llvm-23.1.5-aarch64-linux-musl-dev.tar.xz
+clang+llvm-23.1.5-aarch64-linux-musl/bin/llvm-config --libs core
+```
+
+The libraries are built against libc++ with exceptions and RTTI off, like the
+tools. Code that links them must use the package's libc++
+(`clang++ $(llvm-config --cxxflags)`), never libstdc++. Rust's `rustc_llvm`, for
+example, is built with `llvm.static-libstdcpp = false` and this package's
+`clang++` as its C++ compiler.
 
 ## Usage
 

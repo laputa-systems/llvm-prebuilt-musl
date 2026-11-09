@@ -14,7 +14,9 @@
 # really run: a failing executable is a failure.
 set -uo pipefail
 
-TARBALL="${1:?usage: validate.sh <package.tar.xz>}"
+TARBALL="${1:?usage: validate.sh <package.tar.xz> <package-dev.tar.xz>}"
+DEV_TARBALL="${2:?usage: validate.sh <package.tar.xz> <package-dev.tar.xz>}"
+PURITY="${PURITY_SCRIPT:-/check-purity.sh}"
 : "${LLVM_VERSION:?}" "${MUSL_VERSION:?}" "${LLVM_ARCH:?}"
 TESTS="${TESTS_DIR:-/tests}"
 MAJOR="${LLVM_VERSION%%.*}"
@@ -480,6 +482,50 @@ if out=$("$CLANG" "${COMMON[@]}" -I"${TC}/include" "${TESTS}/libclang/parse.c" -
     if [ "$rc" -eq 0 ] && [ "$actual" = "$(cat "${TESTS}/libclang/parse.expected")" ]; then pass "libclang client parses a translation unit with a resource header"; else
         fail "libclang client (exit ${rc})"; printf '%s\n' "$actual" | indent; fi
 else fail "build libclang client"; printf '%s\n' "$out" | indent; fi
+
+# -- purity -----------------------------------------------------------------------
+section "Development package extraction"
+if out=$(tar -xf "$DEV_TARBALL" -C "$TC" --strip-components=1 2>&1); then pass "extracted the development package over it"; else
+    fail "extract development package"; printf '%s\n' "$out" | indent; echo "Validation FAILED" >&2; exit 1; fi
+section "purity: no glibc or GNU runtime anywhere in either package"
+check "every ELF file and archive is musl-only and GCC-free" bash "$PURITY" "$TC" "$LLVM_ARCH"
+
+# -- development package ----------------------------------------------------------
+section "development package"
+LLVM_CONFIG="${TC}/bin/llvm-config"
+if out=$("$LLVM_CONFIG" --version 2>&1) && [ "$out" = "${LLVM_VERSION}" ]; then pass "llvm-config reports ${LLVM_VERSION}"; else
+    fail "llvm-config --version"; printf '%s\n' "$out" | indent; fi
+contains "llvm-config reports the relocated prefix" "$("$LLVM_CONFIG" --prefix 2>&1)" "$TC"
+d="${WORK}/llvm-client"
+mkdir -p "$d"
+cat > "${d}/main.cpp" <<'CPP'
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/raw_ostream.h>
+
+int main() {
+    llvm::LLVMContext context;
+    llvm::Module module("purity", context);
+    llvm::IRBuilder<> builder(context);
+    auto *type = llvm::FunctionType::get(builder.getInt32Ty(), false);
+    auto *function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, "answer", module);
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", function));
+    builder.CreateRet(builder.getInt32(42));
+    if (llvm::verifyModule(module, &llvm::errs())) return 1;
+    module.print(llvm::outs(), nullptr);
+    return 0;
+}
+CPP
+# shellcheck disable=SC2046
+if out=$("$CLANGXX" "${COMMON[@]}" $("$LLVM_CONFIG" --cxxflags) "${d}/main.cpp" \
+        $("$LLVM_CONFIG" --ldflags --libs core support --system-libs) -o "${d}/llvm-client" 2>&1); then
+    actual=$("${d}/llvm-client" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] && grep -qF 'ret i32 42' <<<"$actual"; then pass "a libc++ program links the LLVM libraries and builds IR"; else
+        fail "LLVM client (exit ${rc})"; printf '%s\n' "$actual" | indent; fi
+    check "the LLVM client is musl-only and GCC-free" bash "$PURITY" "$d" "$LLVM_ARCH" "${TC}/bin"
+else fail "build LLVM client"; printf '%s\n' "$out" | indent; fi
 
 echo
 echo "=== Validation of ${LLVM_VERSION} ${LLVM_ARCH}: ${passed} passed, ${failed} failed ==="

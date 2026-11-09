@@ -13,19 +13,24 @@ libc.
 Alpine's packaged Clang + LLD
           |
           v
-Build patched LLVM/Clang/LLD 23.1.5 tools ONCE ----> optimizer regressions (opt, FileCheck)
+Stage 1: build patched LLVM/Clang/LLD 23.1.5 ONCE ----> optimizer regressions (opt, FileCheck)
           |
           v
-Build compiler-rt builtins and C++ runtimes with that new Clang (same build tree)
+Stage 1 runtimes (compiler-rt builtins, libc++, libc++abi, libunwind) by that clang,
+installed to work/<arch>/stage1; musl 1.2.6 and zlib built by that clang
           |
           v
-install-distribution -> build musl 1.2.6 with the installed clang -> add lib/musl
+Stage 2: rebuild the shipped tools and the LLVM development libraries with stage 1's
+clang, against libc++/libunwind/compiler-rt and the clang-built musl and zlib
           |
           v
-package (tar.xz) -> validate in a clean container
+install-distribution + development components -> rebuild musl with the shipped clang
+          |
+          v
+check-purity -> package (compiler tar.xz, -dev tar.xz) -> validate in a clean container
 ```
 
-One CMake configuration, one LLVM build tree. `scripts/build.sh` runs the phases inside a single
+One CMake configuration file, two build trees: stage 1 (`build`) and stage 2 (`build2`). Nothing shipped may contain GNU runtime code; `scripts/check-purity.sh` enforces it. `scripts/build.sh` runs the phases inside a single
 build container; `make build` and CI both call it.
 
 ## Commands
@@ -105,12 +110,12 @@ patches/                           Local LLVM patch and its documentation
   Alpine's clang additionally defaults to stack protection, stack-clash probes, and `_FORTIFY_SOURCE=2`;
   those are switched off for the tools so the build image's distro patches do not change the shipped
   compiler (see the comparison below for the size and speed they cost).
-- **Linkage.** The tools embed the host libstdc++ and libgcc: `LLVM_STATIC_LINK_CXX_STDLIB=ON` plus
-  `-static-libgcc` on executables, shared libraries, and modules (LLVM has no option for the latter).
-  That is GNU code linked in statically, not a dynamic GNU dependency; the contract is "no dynamic GNU
-  runtime dependency", enforced by `validate.sh` with an exact `DT_NEEDED` set (musl's libc only).
-  zlib comes from Alpine's `libz.a`, so there is no `libz.so` dependency.
-  These flags apply to the tools only; the runtimes are separate CMake projects that do not inherit them.
+- **Linkage.** Stage 2's tools and libraries are built by stage 1's clang with `LLVM_ENABLE_LIBCXX=ON`
+  and link libc++, libc++abi, libunwind, compiler-rt, the clang-built musl startup objects, and the
+  clang-built zlib statically; only musl's libc is dynamic. `scripts/check-purity.sh` enforces it in
+  `build.sh` and `validate.sh`: musl-only `DT_NEEDED` and interpreter, no `GCC:` in `.comment`, no
+  libstdc++ or GNU symbol versions. The dev package ships that `libz.a` because `llvm-config
+  --system-libs` reports `-lz`, and Alpine's `libz.a` is GCC-built.
 - **Runtime layout.** `LLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF` keeps the flat layout of earlier packages
   (`lib/libc++.a`, `lib/clang/23/lib/linux/libclang_rt.builtins-<arch>.a`, `include/c++/v1/__config_site`),
   independent of how a consumer spells the target triple. `COMPILER_RT_DEFAULT_TARGET_ONLY=ON` means an

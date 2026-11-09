@@ -72,6 +72,8 @@ set(COMPILER_RT_BUILD_GWP_ASAN OFF CACHE BOOL "")
 set(COMPILER_RT_BUILD_CTX_PROFILE OFF CACHE BOOL "")
 
 # libc++, libc++abi, libunwind: static archives only, musl flavor.
+# Stage 2 links these static runtimes into libclang.so and libLTO.so.
+set(RUNTIMES_CMAKE_ARGS "-DCMAKE_POSITION_INDEPENDENT_CODE=ON" CACHE STRING "")
 set(LIBCXX_HAS_MUSL_LIBC ON CACHE BOOL "")
 set(LIBCXX_ENABLE_SHARED OFF CACHE BOOL "")
 set(LIBCXX_ENABLE_STATIC ON CACHE BOOL "")

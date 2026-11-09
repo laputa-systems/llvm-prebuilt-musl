@@ -31,7 +31,7 @@ jobs:
       # The pinned versions and source checksums live in llvm-source.env and
       # musl-source.env.
       - name: Load pinned versions
-        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env >> "$GITHUB_ENV"
+        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env zlib-source.env >> "$GITHUB_ENV"
 
       # Caches only save time; `make source` verifies the archives whatever the
       # cache contained, and ccache never changes build results.
@@ -55,7 +55,7 @@ jobs:
 
       - name: Compute ccache key
         run: |
-          echo "CCACHE_KEY=ccache-v3-${{ matrix.arch }}-${{ env.LLVM_VERSION }}-${{ hashFiles('docker/build.Dockerfile', 'cmake/llvm-musl-distribution.cmake', 'scripts/build.sh', 'patches/*.patch') }}" >> "$GITHUB_ENV"
+          echo "CCACHE_KEY=ccache-v3-${{ matrix.arch }}-${{ env.LLVM_VERSION }}-${{ hashFiles('docker/build.Dockerfile', 'cmake/llvm-musl-distribution.cmake', 'scripts/build.sh', 'patches/*.patch', 'zlib-source.env') }}" >> "$GITHUB_ENV"
 
       - name: Restore ccache
         id: ccache
@@ -97,7 +97,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clang+llvm-${{ env.LLVM_VERSION }}-${{ matrix.arch }}-linux-musl
-          path: work/${{ matrix.arch }}/dist/clang+llvm-${{ env.LLVM_VERSION }}-${{ matrix.arch }}-linux-musl.tar.xz
+          path: |
+            work/${{ matrix.arch }}/dist/clang+llvm-${{ env.LLVM_VERSION }}-${{ matrix.arch }}-linux-musl.tar.xz
+            work/${{ matrix.arch }}/dist/clang+llvm-${{ env.LLVM_VERSION }}-${{ matrix.arch }}-linux-musl-dev.tar.xz
           if-no-files-found: error
 
       - name: Upload build log
@@ -119,7 +121,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Load pinned versions
-        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env >> "$GITHUB_ENV"
+        run: grep -hE '^[A-Za-z_][A-Za-z0-9_]*=' llvm-source.env musl-source.env zlib-source.env >> "$GITHUB_ENV"
 
       - name: Download packages
         uses: actions/download-artifact@v4
@@ -142,4 +144,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$tag" \
-            --notes "LLVM/Clang ${LLVM_VERSION} with the static musl ${MUSL_VERSION} libc, for x86_64-linux-musl and aarch64-linux-musl."
+            --notes "LLVM/Clang ${LLVM_VERSION} with the static musl ${MUSL_VERSION} libc, for x86_64-linux-musl and aarch64-linux-musl, built GCC-free in two stages. The -dev packages add llvm-config, the LLVM static libraries, headers, and CMake exports."
