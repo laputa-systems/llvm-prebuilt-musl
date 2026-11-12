@@ -23,6 +23,10 @@ is caught:
   `libc.a`, the package's `ld.lld`, no libstdc++/libgcc/GCC paths.
 - Static C++ and `--unwindlib=libunwind` C links against a headers-only `--sysroot` (a symlink to musl's
   headers, no `/usr/lib`), so the container's musl-dev stub archives cannot mask a missing `lib/musl` stub.
+- Links for the other architecture's musl and glibc triples and the package architecture's glibc
+  triple against a stand-in sysroot: the plan names no package `lib/musl` path, takes `crt1.o` from the
+  sysroot and compiler-rt's builtins and `crtbegin` for the right architecture, and the output has the
+  right ELF machine.
 - C and C++ programs are compiled, linked, and **run**: default, explicit, documented (README), fully
   static, static-PIE, no-option, and `PATH`-lookup invocations. C covers `unsigned __int128` division
   through compiler-rt builtins; C++ covers exceptions with RAII unwinding, threads and `thread_local`

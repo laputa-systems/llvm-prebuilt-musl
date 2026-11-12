@@ -32,10 +32,15 @@ How the build produces the package and why. [AGENTS.md](../AGENTS.md) holds the 
 - **Runtime layout.** `LLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF` keeps the flat layout of earlier packages
   (`lib/libc++.a`, `lib/clang/23/lib/linux/libclang_rt.builtins-<arch>.a`, `include/c++/v1/__config_site`),
   independent of how a consumer spells the target triple. `COMPILER_RT_DEFAULT_TARGET_ONLY=ON` means an
-  x86-64 package never contains i386 builtins. The generated `clang{,++}.cfg` select lld and compiler-rt,
-  set `--unwindlib=libunwind` for `clang++` and `--unwindlib=none` for `clang`, and add
-  `-B<CFGDIR>/../lib/musl -L<CFGDIR>/../lib/musl -L<CFGDIR>/../lib`
-  (the driver only searches per-target subdirectories on its own). `-B` is a driver option: it makes `crt1.o`,
+  x86-64 package never contains i386 builtins. A second, standalone compiler-rt build after stage 2
+  adds the other architecture's builtins and `crtbegin`/`crtend`, built by the shipped clang against
+  that architecture's musl headers, so either package links the other architecture against a
+  consumer's sysroot. The generated `clang{,++}.cfg` apply to every target: they select lld and
+  compiler-rt, and set `--unwindlib=libunwind` for `clang++` and `--unwindlib=none` for `clang`. Clang
+  then also reads `<triple>.cfg` for the normalized target triple; only `<arch>-unknown-linux-musl.cfg`
+  exists, and it adds `-B<CFGDIR>/../lib/musl -L<CFGDIR>/../lib/musl -L<CFGDIR>/../lib` (the driver
+  only searches per-target subdirectories on its own), so other targets never see the package's musl
+  objects. `-B` is a driver option: it makes `crt1.o`,
   `Scrt1.o`, `rcrt1.o`, `crti.o`, and `crtn.o` resolve inside the package; `-L` makes `libc.a` the
   static-libc choice. libc++abi references the unwinder, so a default `clang++` link must add
   `-lunwind`; a default `clang` link must not, so C and Rust links keep their own unwinding choice.
