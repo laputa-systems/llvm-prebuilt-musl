@@ -1,0 +1,218 @@
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.head_ref || github.run_id }}"
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  GIT_TERMINAL_PROMPT: 0
+
+jobs:
+  preflight:
+    name: Validate release ref
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      default_branch: ${{ steps.ref.outputs.default_branch }}
+    steps:
+      - name: Require the default branch
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          default_branch=$(gh api "repos/$REPOSITORY" --jq '.default_branch')
+          if [[ "$EVENT_NAME" != workflow_dispatch || "$REF" != "refs/heads/$default_branch" ]]; then
+            echo "Release dispatch rejected: expected workflow_dispatch on refs/heads/$default_branch, got $EVENT_NAME on $REF" >&2
+            exit 1
+          fi
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: preflight
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-26.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: ./.github/actions/build
+        with:
+          target: ${{ matrix.target }}
+
+  release:
+    name: Create pre-release
+    needs: [preflight, build]
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Recheck release ref and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ needs.preflight.outputs.default_branch }}
+          RELEASE_TAG: release-${{ github.sha }}
+        run: |
+          default_branch=$(gh api "repos/$REPOSITORY" --jq '.default_branch')
+          if [[ "$EVENT_NAME" != workflow_dispatch || "$REF" != "refs/heads/$default_branch" || "$DEFAULT_BRANCH" != "$default_branch" ]]; then
+            echo "Release publication rejected: expected workflow_dispatch on refs/heads/$default_branch, got $EVENT_NAME on $REF" >&2
+            exit 1
+          fi
+          if response=$(gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" 2>&1); then
+            echo "Release publication rejected: tag $RELEASE_TAG already exists; inspect it before proceeding" >&2
+            exit 1
+          else
+            if [[ "$response" != *"HTTP 404"* ]]; then
+              printf 'Could not verify that tag %s is absent: %s\n' "$RELEASE_TAG" "$response" >&2
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Install jaq
+        run: |
+          sh scripts/install-jaq.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Inventory release assets
+        run: |
+          version=$(jaq -r '.inputs[] | select(.name == "llvm-project") | .version' sources.lock.json)
+          expected=$(
+            for target in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+              arch=${target%%-*}
+              for product in llvm llvm-dev; do
+                printf '%s-%s-%s.tar.xz\n%s-%s-%s.manifest.json\n' \
+                  "$product" "$version" "$target" "$product" "$version" "$target"
+              done
+              printf 'clang+llvm-%s-%s-linux-musl.tar.xz\nclang+llvm-%s-%s-linux-musl-dev.tar.xz\n' \
+                "$version" "$arch" "$version" "$arch"
+            done | LC_ALL=C sort
+          )
+          actual="$(cd dist && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "missing, duplicate, or extra release assets:" >&2
+            echo "$actual" >&2
+            exit 1
+          fi
+
+      - name: Check every manifest names this commit and a clean tree
+        run: |
+          lock_sha256=$(sha256sum sources.lock.json | awk '{ print $1 }')
+          for manifest in dist/*.manifest.json; do
+            jaq -e --arg commit "$GITHUB_SHA" --arg lock_sha256 "$lock_sha256" \
+              '.schema_version == 1 and .source_revision == $commit and .sources_lock_sha256 == $lock_sha256 and .build_dirty == false' \
+              "$manifest" >/dev/null || { echo "$manifest was not built from $GITHUB_SHA with a clean tree" >&2; exit 1; }
+          done
+
+      - name: Check each legacy asset carries its standard archive's bytes
+        run: |
+          for manifest in dist/*.manifest.json; do
+            archive=${manifest%.manifest.json}.tar.xz
+            legacy=dist/$(jaq -r .legacy_asset "$manifest")
+            cmp "$archive" "$legacy" || { echo "$legacy differs from $archive" >&2; exit 1; }
+          done
+
+      - name: Consolidate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum -- *.tar.xz *.manifest.json | LC_ALL=C sort -k 2 > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Create release tag at triggering SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: release-${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ needs.preflight.outputs.default_branch }}
+        run: |
+          default_branch=$(gh api "repos/$REPOSITORY" --jq '.default_branch')
+          if [[ "$EVENT_NAME" != workflow_dispatch || "$REF" != "refs/heads/$default_branch" || "$DEFAULT_BRANCH" != "$default_branch" ]]; then
+            echo "Release publication rejected: expected workflow_dispatch on refs/heads/$default_branch, got $EVENT_NAME on $REF" >&2
+            exit 1
+          fi
+          if response=$(gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" 2>&1); then
+            echo "Release publication rejected: tag $RELEASE_TAG already exists; inspect it before proceeding" >&2
+            exit 1
+          elif [[ "$response" != *"HTTP 404"* ]]; then
+            printf 'Could not verify that tag %s is absent: %s\n' "$RELEASE_TAG" "$response" >&2
+            exit 1
+          fi
+          if response=$(gh api "repos/$REPOSITORY/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" 2>&1); then
+            echo "Created $RELEASE_TAG at $GITHUB_SHA"
+          else
+            printf 'Could not create release tag %s at %s: %s\n' "$RELEASE_TAG" "$GITHUB_SHA" "$response" >&2
+            exit 1
+          fi
+
+      - name: Write release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          previous=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 \
+            --json tagName --jq '.[0].tagName // ""')
+          if [[ -z "$previous" ]]; then
+            printf 'Initial release at %s.\n' "$GITHUB_SHA" > "$notes"
+            exit 0
+          fi
+          compare="repos/$GITHUB_REPOSITORY/compare/$previous...$GITHUB_SHA"
+          status=$(gh api "$compare" --jq '.status')
+          if [[ "$status" != ahead ]]; then
+            printf 'Release notes rejected: %s is %s relative to %s, expected ahead\n' "$GITHUB_SHA" "$status" "$previous" >&2
+            exit 1
+          fi
+          {
+            printf '## Changes since %s\n\n' "$previous"
+            gh api --paginate "$compare?per_page=100" --jq '.commits[] | "- \(.sha[0:12]) \(.commit.message | split("\n")[0])"'
+            printf '\n**Full changelog**: %s/%s/compare/%s...%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$previous" "$GITHUB_SHA"
+          } > "$notes"
+
+      - name: Create pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: release-${{ github.sha }}
+        run: gh release create "$RELEASE_TAG" dist/*.tar.xz dist/*.manifest.json dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --verify-tag --notes-file "$RUNNER_TEMP/release-notes.md" --title "$RELEASE_TAG"

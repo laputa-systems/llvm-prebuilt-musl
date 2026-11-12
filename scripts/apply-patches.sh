@@ -42,7 +42,7 @@ for p in "${patches[@]}"; do
         echo "Patch already applied: ${name}"
     else
         echo "ERROR: ${name} neither applies to nor is already present in ${src}." >&2
-        echo "       Restore a pristine source tree (remove it and rerun 'make source')" >&2
+        echo "       Restore a pristine source tree (remove it and rerun 'make fetch')" >&2
         echo "       or rebase the patch onto this LLVM release." >&2
         exit 1
     fi

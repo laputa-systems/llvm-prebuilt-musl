@@ -22,11 +22,11 @@ runtime, or needs anything but musl.
 | Path | What |
 |------|------|
 | `bin/clang`, `bin/clang++`, `bin/clang-23`, `bin/clang-cl`, `bin/clang-cpp` | C/C++ compiler; defaults to the bundled libc++, compiler-rt, and lld |
-| `bin/clang.cfg`, `bin/clang++.cfg` | Driver configuration: select `ld.lld` and compiler-rt, the bundled libunwind for `clang++` and no implicit unwinder for `clang`; search the package's `lib/` and `lib/musl/` |
+| `bin/clang{,++}.cfg` | Driver configuration: select `ld.lld` and compiler-rt, the bundled libunwind for `clang++` and no implicit unwinder for `clang`; search the package's `lib/` and `lib/musl/` |
 | `bin/lld`, `bin/ld.lld`, `bin/ld64.lld`, `bin/lld-link`, `bin/wasm-ld` | LLVM linker |
 | `bin/llvm-{ar,nm,objcopy,objdump,ranlib,readelf,readobj,size,strings,strip,symbolizer}` | Binary utilities |
 | `lib/libclang.so`, `include/clang-c/` | Musl-linked libclang C API library and headers |
-| `lib/libLTO.so`, `include/llvm-c/lto.h` | Musl-linked LTO library and header |
+| `lib/libLTO.so`, `lto.h` in `include/llvm-c/` | Musl-linked LTO library and header |
 | `lib/clang/23/include/` | Clang resource headers |
 | `lib/clang/23/lib/linux/libclang_rt.builtins-<arch>.a` | compiler-rt builtins for the package's architecture |
 | `lib/clang/23/lib/linux/clang_rt.crt{begin,end}[-<arch>].o`, `crtbegin{,S,T}.o`, `crtend{,S}.o` | compiler-rt startup files under its own and GCC's names (symlinks), so the driver needs no GCC crt files |
@@ -45,7 +45,7 @@ files are in the separate development package.
 `clang+llvm-<version>-<arch>-linux-musl-dev.tar.xz` holds `bin/llvm-config`, the
 static LLVM component libraries for the X86 and AArch64 targets, `include/llvm`,
 `include/llvm-c`, the CMake exports under `lib/cmake/llvm`, and the
-clang-built static zlib (`lib/libz.a`, `include/zlib.h`) that
+clang-built static zlib (`lib/libz.a`, `zlib.h` in `include/`) that
 `llvm-config --system-libs` names as `-lz`. Its top-level
 directory matches the compiler package, so extract both into the same place:
 
@@ -131,8 +131,7 @@ supply that runtime, so the caller's GCC installation must.
 The libc is musl 1.2.6, built out-of-tree from the upstream release tarball
 with the packaged clang, `llvm-ar`, `llvm-ranlib`, and compiler-rt builtins
 (`--disable-shared`, no GCC anywhere in the build). The version and tarball
-sha256 are pinned in [`musl-source.env`](musl-source.env), and the release notes
-repeat the version. Only the static libc, the startup objects, and musl's empty stub archives
+sha256 are pinned in [`sources.lock.json`](sources.lock.json). Only the static libc, the startup objects, and musl's empty stub archives
 (`libm.a`, `librt.a`, `libpthread.a`, `libcrypt.a`, `libutil.a`, `libxnet.a`,
 `libresolv.a`, `libdl.a`, created with `llvm-ar`) are shipped; the
 target's headers come from the consumer, and the dynamic loader is the system's.
@@ -142,6 +141,50 @@ target's headers come from the consumer, and the dynamic loader is the system's.
 The build applies one local LLVM patch, an iterative rewrite of the Dead Store
 Elimination dominator-tree walk that cannot overflow a small stack. See
 [`patches/README.md`](patches/README.md).
+
+## Building
+
+The build runs in containers and needs Docker, `curl`, and `jaq`
+(`sh scripts/install-jaq.sh <dir>` installs the pinned release). Builds take
+hours; a ccache directory under `.work/` makes later ones faster.
+
+| Command | What |
+|---------|------|
+| `make fetch` | Download, verify, and extract the sources pinned in [`sources.lock.json`](sources.lock.json) |
+| `make build` | Fetch, build and package in a container, and name the release assets in `dist/release` |
+| `make verify` | Test the packages in a clean, network-less container and check the release assets against them |
+| `make lint` | Run shellcheck over the scripts and check the lock file |
+| `make clean` | Remove this target's build tree and packages |
+
+`TARGET` selects the package, `x86_64-unknown-linux-musl` or
+`aarch64-unknown-linux-musl`, and defaults to the host's architecture. Docker
+emulates the other architecture, slowly.
+
+`sources.lock.json` pins every download: the LLVM, musl, zlib, and mimalloc
+versions, URLs, and sha256 digests. `make fetch` verifies each archive on every
+run, whether downloaded or cached, extracts it beside the cache under `.work/`,
+and never modifies an extracted directory that already exists. To change a
+version, update the lock entry together with the digest its `purpose` field
+names as the source.
+
+## Releases
+
+`.github/workflows/release.yml` publishes a release. Dispatch it on the default
+branch only: it builds and verifies both targets, checks `SHA256SUMS` with
+`sha256sum -c`, and creates the pre-release `release-<commit sha>`, failing if
+that tag exists. `.github/workflows/build.yml` builds and verifies both targets
+on any branch without publishing. Releases made before this layout keep their
+`llvm-musl-<version>-<short sha>` tags.
+
+Each target publishes two layouts of the same bytes:
+
+- `llvm-<version>-<target>.tar.xz` and `llvm-dev-<version>-<target>.tar.xz`, each
+  with a `.manifest.json` naming the version, target, source commit, and the
+  sha256 of `sources.lock.json`.
+- `clang+llvm-<version>-<arch>-linux-musl.tar.xz` and the matching `-dev`
+  archive, the original names. These stay because consumers pin them:
+  laputa-systems/chromium-build, joshuarli/stats, joshuarli/soulseek-rs, the
+  stuff fleet's musl toolchain policy, bctl, and hydrogen.
 
 ## Rust
 
@@ -156,7 +199,7 @@ toolchain's zlib-enabled lld instead, configure Cargo to invoke the shipped
 `clang` driver. The driver selects the shipped `ld.lld` and links static musl
 targets against the bundled `libc.a` and startup objects.
 
-Create `.cargo/config.toml` in the Rust workspace:
+Create `config.toml` in the Rust workspace's `.cargo/` directory:
 
 ```toml
 [target.aarch64-unknown-linux-musl]

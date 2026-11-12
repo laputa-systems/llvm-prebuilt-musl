@@ -1,7 +1,7 @@
 # Local LLVM patches
 
 This directory holds the patches applied to the pristine LLVM source tarball
-pinned in [`llvm-source.env`](../llvm-source.env) (LLVM 23.1.5).
+pinned in [`sources.lock.json`](../sources.lock.json) (LLVM 23.1.5).
 `scripts/apply-patches.sh` applies them before the build is configured.
 
 ## Patch inventory
