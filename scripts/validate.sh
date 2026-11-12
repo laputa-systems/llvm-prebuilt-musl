@@ -23,10 +23,15 @@ MAJOR="${LLVM_VERSION%%.*}"
 TRIPLE="${LLVM_ARCH}-linux-musl"
 
 case "$LLVM_ARCH" in
-    x86_64)  MACHINE="X86-64";   OTHER_TRIPLE="aarch64-linux-musl"; OTHER_MACHINE="AArch64" ;;
-    aarch64) MACHINE="AArch64";  OTHER_TRIPLE="x86_64-linux-musl";  OTHER_MACHINE="X86-64" ;;
+    x86_64)  MACHINE="X86-64";   OTHER_ARCH="aarch64" ;;
+    aarch64) MACHINE="AArch64";  OTHER_ARCH="x86_64" ;;
     *) echo "unsupported LLVM_ARCH ${LLVM_ARCH}" >&2; exit 2 ;;
 esac
+case "$OTHER_ARCH" in
+    x86_64)  OTHER_MACHINE="X86-64" ;;
+    aarch64) OTHER_MACHINE="AArch64" ;;
+esac
+OTHER_TRIPLE="${OTHER_ARCH}-linux-musl"
 # The complete set of external dependencies a shipped ELF may have: musl's libc.
 MUSL_SONAME="libc.musl-${LLVM_ARCH}.so.1"
 MUSL_INTERP="/lib/ld-musl-${LLVM_ARCH}.so.1"
@@ -98,7 +103,7 @@ CXXFLAGS=(-std=c++20 -O2 -Wall -Wextra -Werror)
 # Exact expected contents of the top-level directories. Anything missing or
 # extra is a deliberate-change signal, not something to wave through.
 declare -A expected_entries=(
-    [bin]="clang clang++ clang++.cfg clang-${MAJOR} clang-cl clang-cpp clang.cfg ld.lld ld64.lld lld lld-link
+    [bin]="${LLVM_ARCH}-unknown-linux-musl.cfg clang clang++ clang++.cfg clang-${MAJOR} clang-cl clang-cpp clang.cfg ld.lld ld64.lld lld lld-link
            llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-ranlib llvm-readelf llvm-readobj llvm-size llvm-strings
            llvm-strip llvm-symbolizer wasm-ld"
     [lib]="clang libLTO.so libLTO.so.${MAJOR}.1 libc++.a libc++abi.a libc++experimental.a libclang.so
@@ -140,6 +145,9 @@ for required in include/c++/v1/__config_site include/c++/v1/iostream include/c++
                 "lib/clang/${MAJOR}/lib/linux/clang_rt.crtend-${LLVM_ARCH}.o" \
                 "lib/clang/${MAJOR}/lib/linux/clang_rt.crtbegin.o" \
                 "lib/clang/${MAJOR}/lib/linux/clang_rt.crtend.o" \
+                "lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${OTHER_ARCH}.a" \
+                "lib/clang/${MAJOR}/lib/linux/clang_rt.crtbegin-${OTHER_ARCH}.o" \
+                "lib/clang/${MAJOR}/lib/linux/clang_rt.crtend-${OTHER_ARCH}.o" \
                 lib/musl/libc.a lib/musl/libc.so lib/musl/crt1.o lib/musl/rcrt1.o lib/musl/Scrt1.o \
                 lib/musl/crti.o lib/musl/crtn.o; do
     verdict "present: ${required}" test -e "${TC}/${required}"
@@ -179,7 +187,9 @@ while IFS= read -r file; do
     rpath=$(sed -n 's/.*(RPATH).*\[\(.*\)\]/\1/p' <<<"$info")
     runpath=$(sed -n 's/.*(RUNPATH).*\[\(.*\)\]/\1/p' <<<"$info")
     problems=""
-    case "$machine" in *"$MACHINE"*) ;; *) problems+=" machine='${machine}'" ;; esac
+    expected_machine=$MACHINE
+    case "$rel" in "lib/clang/${MAJOR}/lib/linux/clang_rt."*"-${OTHER_ARCH}.o") expected_machine=$OTHER_MACHINE ;; esac
+    case "$machine" in *"$expected_machine"*) ;; *) problems+=" machine='${machine}'" ;; esac
     if [ "$type" = REL ]; then
         [ -z "$interp$needed$rpath$runpath" ] || problems+=" relocatable file with dynamic info"
     else
@@ -199,7 +209,7 @@ while IFS= read -r file; do
         esac
     fi
     inspected+=" ${rel} "
-    if [ -z "$problems" ]; then pass "${rel}: ${type} ${MACHINE} ${interp:+interp=$interp }${needed:+needs ${needed}}"; else fail "${rel}:${problems}"; fi
+    if [ -z "$problems" ]; then pass "${rel}: ${type} ${expected_machine} ${interp:+interp=$interp }${needed:+needs ${needed}}"; else fail "${rel}:${problems}"; fi
 done < <(find "$TC" -type f | LC_ALL=C sort)
 # Aliases are symlinks, so these are the real files behind every shipped tool.
 for required in bin/clang-${MAJOR} bin/lld bin/llvm-ar bin/llvm-nm bin/llvm-objcopy bin/llvm-objdump bin/llvm-readobj \
@@ -220,6 +230,16 @@ for archive in "lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a
         fail "${archive}: machines found: ${machines:-none}"
     fi
 done
+for archive in "lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${OTHER_ARCH}.a" \
+               "lib/clang/${MAJOR}/lib/linux/clang_rt.crtbegin-${OTHER_ARCH}.o" \
+               "lib/clang/${MAJOR}/lib/linux/clang_rt.crtend-${OTHER_ARCH}.o"; do
+    machines=$("$READELF" -h "${TC}/${archive}" 2>&1 | sed -n 's/^ *Machine: *//p' | sort -u)
+    if [ -n "$machines" ] && [ "$(wc -l <<<"$machines")" -eq 1 ] && [[ "$machines" == *"$OTHER_MACHINE"* ]]; then
+        pass "${archive}: only ${OTHER_MACHINE} objects"
+    else
+        fail "${archive}: machines found: ${machines:-none}"
+    fi
+done
 # libc++.a carries the libc++abi objects so that the driver's default -lc++ links.
 verdict "libc++.a contains the libc++abi objects" grep -q '__cxa_throw' <("${TC}/bin/llvm-nm" --defined-only "${TC}/lib/libc++.a" 2>&1)
 
@@ -233,6 +253,7 @@ for obj in crt1.o rcrt1.o Scrt1.o crti.o crtn.o; do
 done
 no_gcc lib/libunwind.a "${TC}/lib/libunwind.a"
 no_gcc "libclang_rt.builtins-${LLVM_ARCH}.a" "${TC}/lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a"
+no_gcc "libclang_rt.builtins-${OTHER_ARCH}.a" "${TC}/lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${OTHER_ARCH}.a"
 
 # -- tools start and identify themselves -------------------------------------------
 section "Tools"
@@ -241,6 +262,7 @@ contains "clang reports version ${LLVM_VERSION}" "$out" "clang version ${LLVM_VE
 contains "clang defaults to a musl target" "$out" "Target: ${LLVM_ARCH}-unknown-linux-musl"
 contains "clang runs from the relocated prefix" "$out" "InstalledDir: ${TC}/bin"
 contains "clang picks up its config file" "$out" "Configuration file: ${TC}/bin/clang.cfg"
+contains "clang picks up the package target's config file" "$out" "Configuration file: ${TC}/bin/${LLVM_ARCH}-unknown-linux-musl.cfg"
 out=$("${TC}/bin/ld.lld" --version 2>&1)
 contains "ld.lld reports version ${LLVM_VERSION}" "$out" "LLD ${LLVM_VERSION}"
 for tool in clang ld.lld; do
@@ -386,6 +408,42 @@ int main(void) {
 EOF
 build_run c-static-unwind-headers-only "${WORK}/unwind.expected" "$CLANG" "${ISOLATED[@]}" -O2 -static --unwindlib=libunwind "${WORK}/unwind.c" &&
     expect_linkage c-static-unwind-headers-only static
+
+section "Links for other targets against a consumer sysroot"
+# A consumer linking the other architecture, or a glibc triple, supplies its own
+# sysroot; the package supplies the linker and compiler-rt. The stand-in sysroot
+# holds only startup objects and an empty libc, so the links cannot run here, but
+# every object the driver adds is visible in the plan and the result. cross.c
+# divides unsigned __int128, which needs compiler-rt's builtins on both targets.
+cat > "${WORK}/cross.c" <<'EOF'
+unsigned long long quotient(unsigned __int128 n, unsigned __int128 d) { return (unsigned long long)(n / d); }
+int main(void) { return (int)quotient((unsigned __int128)1 << 100, 3); }
+EOF
+cat > "${WORK}/cross-start.c" <<'EOF'
+int main(void);
+void _start(void) { main(); for (;;) {} }
+EOF
+for triple in "${OTHER_ARCH}-unknown-linux-musl" "${OTHER_ARCH}-unknown-linux-gnu" "${LLVM_ARCH}-unknown-linux-gnu"; do
+    case "$triple" in "${OTHER_ARCH}"-*) machine=$OTHER_MACHINE arch=$OTHER_ARCH ;; *) machine=$MACHINE arch=$LLVM_ARCH ;; esac
+    sysroot="${WORK}/sysroot-${triple}"
+    mkdir -p "${sysroot}/usr/lib"
+    if ! out=$("$CLANG" --target="$triple" -ffreestanding -nostdinc -O2 -c "${WORK}/cross-start.c" -o "${sysroot}/usr/lib/crt1.o" 2>&1 &&
+        printf '' | "$CLANG" --target="$triple" -x c -c - -o "${sysroot}/usr/lib/crti.o" 2>&1 &&
+        cp "${sysroot}/usr/lib/crti.o" "${sysroot}/usr/lib/crtn.o" &&
+        "${TC}/bin/llvm-ar" rc "${sysroot}/usr/lib/libc.a" 2>&1); then
+        fail "${triple}: stand-in sysroot"; printf '%s\n' "$out" | indent; continue
+    fi
+    flags=(--target="$triple" --sysroot="$sysroot" -ffreestanding -nostdinc -O2 -static)
+    plan=$("$CLANG" "${flags[@]}" -### "${WORK}/cross.c" -o "${WORK}/cross-${triple}" 2>&1)
+    lacks "${triple}: no package musl paths in the link" "$plan" "/lib/musl"
+    contains "${triple}: crt1.o comes from the consumer sysroot" "$plan" "\"${sysroot}/usr/lib/crt1.o\""
+    contains "${triple}: compiler-rt builtins for ${arch}" "$plan" "\"${RES}/lib/linux/libclang_rt.builtins-${arch}.a\""
+    contains "${triple}: compiler-rt crtbegin for ${arch}" "$plan" "\"${RES}/lib/linux/clang_rt.crtbegin-${arch}.o\""
+    lacks "${triple}: no libgcc" "$plan" "-lgcc"
+    if out=$("$CLANG" "${flags[@]}" "${WORK}/cross.c" -o "${WORK}/cross-${triple}" 2>&1); then
+        contains "${triple}: links a ${machine} executable" "$("$READELF" -h "${WORK}/cross-${triple}" 2>&1)" "$machine"
+    else fail "${triple}: link"; printf '%s\n' "$out" | indent; fi
+done
 
 # -- ThinLTO ----------------------------------------------------------------------
 section "ThinLTO (multi-translation-unit)"

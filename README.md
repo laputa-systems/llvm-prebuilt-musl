@@ -4,7 +4,9 @@ Prebuilt LLVM/Clang 23.1.5 toolchains for `x86_64-linux-musl` and
 `aarch64-linux-musl`. Each package also carries musl 1.2.6's static libc and
 startup objects, built by the packaged clang with compiler-rt, so a program can
 be linked against a GCC-free musl without building one first. Packages target
-their own architecture and contain both the X86 and AArch64 compiler backends.
+their own architecture and contain both the X86 and AArch64 compiler backends,
+with compiler-rt for both, so either package also links the other architecture
+against a sysroot the caller supplies.
 The tools and shared libraries are dynamically linked against musl and nothing
 else (`libc.musl-<arch>.so.1`). They are built in two stages so that nothing
 shipped contains GNU runtime code: libc++, libc++abi, libunwind, compiler-rt,
@@ -22,13 +24,14 @@ runtime, or needs anything but musl.
 | Path | What |
 |------|------|
 | `bin/clang`, `bin/clang++`, `bin/clang-23`, `bin/clang-cl`, `bin/clang-cpp` | C/C++ compiler; defaults to the bundled libc++, compiler-rt, and lld |
-| `bin/clang{,++}.cfg` | Driver configuration: select `ld.lld` and compiler-rt, the bundled libunwind for `clang++` and no implicit unwinder for `clang`; search the package's `lib/` and `lib/musl/` |
+| `bin/clang{,++}.cfg` | Driver configuration for every target: select `ld.lld` and compiler-rt, the bundled libunwind for `clang++` and no implicit unwinder for `clang` |
+| `bin/<arch>-unknown-linux-musl.cfg` | Driver configuration for the package's own target only: search the package's `lib/` and `lib/musl/` |
 | `bin/lld`, `bin/ld.lld`, `bin/ld64.lld`, `bin/lld-link`, `bin/wasm-ld` | LLVM linker |
 | `bin/llvm-{ar,nm,objcopy,objdump,ranlib,readelf,readobj,size,strings,strip,symbolizer}` | Binary utilities |
 | `lib/libclang.so`, `include/clang-c/` | Musl-linked libclang C API library and headers |
 | `lib/libLTO.so`, `lto.h` in `include/llvm-c/` | Musl-linked LTO library and header |
 | `lib/clang/23/include/` | Clang resource headers |
-| `lib/clang/23/lib/linux/libclang_rt.builtins-<arch>.a` | compiler-rt builtins for the package's architecture |
+| `lib/clang/23/lib/linux/libclang_rt.builtins-{x86_64,aarch64}.a` | compiler-rt builtins for both architectures |
 | `lib/clang/23/lib/linux/clang_rt.crt{begin,end}[-<arch>].o`, `crtbegin{,S,T}.o`, `crtend{,S}.o` | compiler-rt startup files under its own and GCC's names (symlinks), so the driver needs no GCC crt files |
 | `include/c++/v1/` | libc++ headers, including the generated `__config_site` |
 | `lib/libc++.a`, `lib/libc++abi.a`, `lib/libunwind.a`, `lib/libc++experimental.a` | Static C++ runtime libraries (`libc++.a` also contains the libc++abi objects) |
@@ -73,8 +76,9 @@ export PATH="$TOOLCHAIN/bin:$PATH"
 
 The package needs the target's musl headers only: a musl-dev installation or a
 sysroot that provides them. It does not need that sysroot's startup objects,
-`libc.a`, GCC, libstdc++, or libgcc. `clang.cfg` searches `lib/musl/` first for
-startup files and libraries, so a plain link uses the bundled musl 1.2.6 libc;
+`libc.a`, GCC, libstdc++, or libgcc. For the package's own target,
+`<arch>-unknown-linux-musl.cfg` searches `lib/musl/` first for startup files and
+libraries, so a plain link uses the bundled musl 1.2.6 libc;
 `libc.so` there is a link-time script that keeps an ordinary link dynamic
 against the system's musl loader.
 
@@ -114,6 +118,24 @@ clang++ --target=aarch64-linux-musl \
 to the system's musl loader (through the sysroot, so `--sysroot` keeps working).
 Without it, the bundled `libc.a` would win for dynamic links too and silently
 produce a static-libc executable.
+
+### Other targets
+
+Clang reads `clang.cfg` or `clang++.cfg` for every target, and then
+`<triple>.cfg` for the normalized target triple (`aarch64-linux-musl` normalizes
+to `aarch64-unknown-linux-musl`). Only the package's own musl triple has one, so
+the bundled musl, libc++, and libunwind are linked for that target alone. Any
+other target, such as the other architecture or a glibc triple, links with the
+shipped lld and compiler-rt, whose builtins and `crtbegin`/`crtend` objects the
+package carries for both architectures, and takes its startup objects, libc,
+and any C++ runtime from the `--sysroot` you pass:
+
+```sh
+clang --target=x86_64-unknown-linux-gnu --sysroot=/path/to/x86_64-glibc-sysroot hello.c -o hello
+```
+
+A vendor spelling other than `unknown`, such as `aarch64-alpine-linux-musl`,
+is a different triple and does not get the package's musl paths either.
 
 For tools that use libclang through bindgen or another C API client, point the
 loader at the bundled library:
