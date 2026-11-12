@@ -2,6 +2,17 @@ name: build
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/actions/build/**
+      - .github/workflows/build.yml
+      - Makefile
+      - cmake/**
+      - docker/**
+      - patches/**
+      - scripts/**
+      - sources.lock.json
+      - tests/**
 
 permissions: {}
 
@@ -16,8 +27,9 @@ defaults:
 env:
   GIT_TERMINAL_PROMPT: 0
 
-# Builds and verifies both architectures on any ref without publishing, so a
-# branch can be proven before it is released. release.yml runs the same steps.
+# Builds and verifies both architectures without publishing: on pull requests
+# that change a build input, and on demand for any ref. release.yml runs the
+# same steps.
 jobs:
   build:
     name: Build (${{ matrix.target }})
