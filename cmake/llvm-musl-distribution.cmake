@@ -21,8 +21,8 @@ set(CMAKE_C_FLAGS "-fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_S
 set(CMAKE_CXX_FLAGS "-fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE" CACHE STRING "")
 
 # -- Compiler tools ------------------------------------------------------------
-# Both backends in every package; the runtimes are for the package's own arch.
-set(LLVM_TARGETS_TO_BUILD "X86;AArch64" CACHE STRING "")
+# X86, AArch64 and BPF in every package; the runtimes are for the package's own arch.
+set(LLVM_TARGETS_TO_BUILD "X86;AArch64;BPF" CACHE STRING "")
 set(LLVM_ENABLE_PROJECTS "clang;lld" CACHE STRING "")
 set(LLVM_ENABLE_LLD ON CACHE BOOL "")
 set(LLVM_ENABLE_LIBXML2 OFF CACHE BOOL "")

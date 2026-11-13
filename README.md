@@ -4,9 +4,10 @@ Prebuilt LLVM/Clang 23.1.5 toolchains for `x86_64-linux-musl` and
 `aarch64-linux-musl`. Each package also carries musl 1.2.6's static libc and
 startup objects, built by the packaged clang with compiler-rt, so a program can
 be linked against a GCC-free musl without building one first. Packages target
-their own architecture and contain both the X86 and AArch64 compiler backends,
-with compiler-rt for both, so either package also links the other architecture
-against a sysroot the caller supplies.
+their own architecture and contain the X86 and AArch64 compiler backends, with
+compiler-rt for both, so either package also links the other architecture
+against a sysroot the caller supplies. They also contain the BPF backend for
+freestanding eBPF objects (`-target bpf`, `-ffreestanding -nostdinc`).
 The tools and shared libraries are dynamically linked against musl and nothing
 else (`libc.musl-<arch>.so.1`). They are built in two stages so that nothing
 shipped contains GNU runtime code: libc++, libc++abi, libunwind, compiler-rt,
@@ -46,7 +47,7 @@ files are in the separate development package.
 ## Development package
 
 `clang+llvm-<version>-<arch>-linux-musl-dev.tar.xz` holds `bin/llvm-config`, the
-static LLVM component libraries for the X86 and AArch64 targets, `include/llvm`,
+static LLVM component libraries for the X86, AArch64, and BPF targets, `include/llvm`,
 `include/llvm-c`, the CMake exports under `lib/cmake/llvm`, and the
 clang-built static zlib (`lib/libz.a`, `zlib.h` in `include/`) that
 `llvm-config --system-libs` names as `-lz`. Its top-level
@@ -136,6 +137,13 @@ clang --target=x86_64-unknown-linux-gnu --sysroot=/path/to/x86_64-glibc-sysroot 
 
 A vendor spelling other than `unknown`, such as `aarch64-alpine-linux-musl`,
 is a different triple and does not get the package's musl paths either.
+
+The BPF backend produces freestanding eBPF objects for a userspace loader to
+embed. It takes no sysroot and links nothing:
+
+```sh
+clang --target=bpf -ffreestanding -nostdinc -O2 -c probe.c -o probe.o
+```
 
 For tools that use libclang through bindgen or another C API client, point the
 loader at the bundled library:
