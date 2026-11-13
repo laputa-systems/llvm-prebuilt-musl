@@ -279,7 +279,8 @@ for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-ranlib llvm-readelf l
     if out=$("${TC}/bin/${tool}" --version 2>&1); then contains "${tool} reports LLVM ${LLVM_VERSION}" "$out" "${LLVM_VERSION}"
     else fail "${tool} --version"; printf '%s\n' "$out" | indent; fi
 done
-# Both compiled-in backends, without a non-native sysroot.
+# Both compiled-in musl backends, without a non-native sysroot, and the BPF
+# backend for freestanding eBPF objects.
 for pair in "${TRIPLE}:${MACHINE}" "${OTHER_TRIPLE}:${OTHER_MACHINE}"; do
     triple="${pair%%:*}" machine="${pair##*:}"
     obj="${WORK}/backend-${triple}.o"
@@ -287,6 +288,11 @@ for pair in "${TRIPLE}:${MACHINE}" "${OTHER_TRIPLE}:${OTHER_MACHINE}"; do
         contains "compile for ${triple}" "$("$READELF" -h "$obj" 2>&1)" "$machine"
     else fail "compile for ${triple}"; printf '%s\n' "$out" | indent; fi
 done
+bpf_obj="${WORK}/backend-bpf.o"
+if out=$("$CLANG" --target=bpf -ffreestanding -nostdinc -O2 -c "${TESTS}/probe/backend.c" -o "$bpf_obj" 2>&1); then
+    contains "compile for bpf" "$("$READELF" -h "$bpf_obj" 2>&1)" "BPF"
+    check "llvm-objdump disassembles the BPF object" "${TC}/bin/llvm-objdump" -d "$bpf_obj"
+else fail "compile for bpf"; printf '%s\n' "$out" | indent; fi
 
 # -- driver defaults --------------------------------------------------------------
 section "Driver defaults (no options besides the target)"

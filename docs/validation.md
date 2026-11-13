@@ -33,5 +33,5 @@ is caught:
   destructors, libc++ facilities, RTTI, `__int128` and `long double` builtins.
 - Multi-translation-unit `-flto=thin` (dynamic and static) with a check that cross-module inlining
   happened and a non-LTO control.
-- Both compiled-in backends, LLVM utilities, zlib debug-section compression through lld and
+- The compiled-in backends (X86, AArch64, BPF), LLVM utilities, zlib debug-section compression through lld and
   `llvm-symbolizer`, archives, and a libclang C API client.
