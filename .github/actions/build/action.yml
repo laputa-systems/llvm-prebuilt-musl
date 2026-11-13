@@ -1,0 +1,112 @@
+name: Build and verify
+description: Fetch the pinned sources, build the package for one target in a container, and verify it in a clean one.
+
+inputs:
+  target:
+    description: x86_64-unknown-linux-musl or aarch64-unknown-linux-musl
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install jaq
+      shell: bash -euo pipefail {0}
+      run: |
+        sh scripts/install-jaq.sh "$RUNNER_TEMP/bin"
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+    - name: Load pinned versions
+      shell: bash -euo pipefail {0}
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        {
+          echo "LLVM_ARCH=${TARGET%%-*}"
+          echo "LLVM_VERSION=$(jaq -r '.inputs[] | select(.name == "llvm-project") | .version' sources.lock.json)"
+        } >> "$GITHUB_ENV"
+
+    # Caches only save time; `make fetch` verifies the archives whatever the
+    # cache contained, and ccache never changes build results.
+    - name: Restore pinned source archives
+      id: source-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .work/download
+        key: sources-${{ hashFiles('sources.lock.json') }}
+
+    - name: Fetch and verify sources
+      shell: bash -euo pipefail {0}
+      run: make fetch
+
+    - name: Save pinned source archives
+      if: steps.source-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .work/download
+        key: sources-${{ hashFiles('sources.lock.json') }}
+
+    - name: Compute ccache key
+      shell: bash -euo pipefail {0}
+      env:
+        CCACHE_FILES_HASH: ${{ hashFiles('docker/build.Dockerfile', 'cmake/llvm-musl-distribution.cmake', 'scripts/build.sh', 'patches/*.patch', 'sources.lock.json') }}
+      run: |
+        echo "CCACHE_KEY=ccache-v3-$LLVM_ARCH-$LLVM_VERSION-$CCACHE_FILES_HASH" >> "$GITHUB_ENV"
+
+    - name: Restore ccache
+      id: ccache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .work/ccache
+        key: ${{ env.CCACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          ${{ env.CCACHE_KEY }}-
+          ccache-v3-${{ env.LLVM_ARCH }}-${{ env.LLVM_VERSION }}-
+
+    # Build, optimizer regressions, install, package, and name the release
+    # assets (ccache statistics are printed at the end of the log).
+    - name: Build
+      shell: bash -euo pipefail {0}
+      env:
+        TARGET: ${{ inputs.target }}
+      run: make build TARGET="$TARGET"
+
+    - name: Validate the package in a clean container
+      shell: bash -euo pipefail {0}
+      env:
+        TARGET: ${{ inputs.target }}
+      run: make verify TARGET="$TARGET"
+
+    - name: Check ccache contents
+      id: ccache-contents
+      if: always()
+      shell: bash -euo pipefail {0}
+      run: |
+        if [[ -d .work/ccache ]] && find .work/ccache -type f -print -quit | grep -q .; then
+          echo "present=1" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=0" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Save ccache
+      if: always() && steps.ccache-contents.outputs.present == '1'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .work/ccache
+        key: ${{ steps.ccache.outputs.cache-primary-key }}
+
+    - name: Upload packages
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: release-${{ inputs.target }}
+        path: dist/release/*
+        if-no-files-found: error
+
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: build-log-${{ inputs.target }}
+        path: .work/${{ env.LLVM_ARCH }}/logs/build.log
+        if-no-files-found: ignore

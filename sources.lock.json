@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "inputs": [
+    {
+      "name": "llvm-project",
+      "version": "23.1.5",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.5/llvm-project-23.1.5.src.tar.xz",
+      "sha256": "fb50b1eac93ddeb3aa8dab4cfe324dff74f4a9c2bdee6160c9e36188f8d06a6e",
+      "size": 179220264,
+      "role": "source",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "purpose": "The LLVM, Clang, and LLD sources that the package builds. The digest is the sha256 published in the upstream release metadata (gh api repos/llvm/llvm-project/releases/tags/llvmorg-<version>).",
+      "archive": "llvm-project-23.1.5.src.tar.xz",
+      "dir": "llvm-project-23.1.5",
+      "env": "LLVM"
+    },
+    {
+      "name": "musl",
+      "version": "1.2.6",
+      "url": "https://musl.libc.org/releases/musl-1.2.6.tar.gz",
+      "sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+      "size": 1082499,
+      "role": "source",
+      "license": "MIT",
+      "purpose": "The static libc bundled in the package. The digest is the sha256 of the upstream release tarball from musl.libc.org.",
+      "archive": "musl-1.2.6.tar.gz",
+      "dir": "musl-1.2.6",
+      "env": "MUSL"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.2",
+      "url": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz",
+      "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+      "size": 1502830,
+      "role": "source",
+      "license": "Zlib",
+      "purpose": "The zlib linked into the shipped LLVM tools, built GCC-free by stage 1. The digest is the sha256 of the upstream release tarball, signed by Mark Adler (key 5ED46A6721D365587791E2AA783FCD8E58BCAFBA).",
+      "archive": "zlib-1.3.2.tar.gz",
+      "dir": "zlib-1.3.2",
+      "env": "ZLIB"
+    },
+    {
+      "name": "mimalloc",
+      "version": "2.5.2",
+      "url": "https://github.com/microsoft/mimalloc/archive/refs/tags/v2.5.2.tar.gz",
+      "sha256": "5cf9d2a10fae5551b764e888a623da411c6c6beb0221b847f83492ab1932bdab",
+      "size": 1390775,
+      "role": "source",
+      "license": "MIT",
+      "purpose": "The allocator linked into the shipped LLVM tools, built GCC-free by stage 1. The digest is the sha256 of GitHub's archive of the upstream v2.5.2 tag.",
+      "archive": "mimalloc-2.5.2.tar.gz",
+      "dir": "mimalloc-2.5.2",
+      "env": "MIMALLOC"
+    }
+  ]
+}

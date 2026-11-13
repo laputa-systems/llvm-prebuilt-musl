@@ -34,6 +34,10 @@ TOOL_THREAD_STACK_BYTES=8388608
 STAGE1="${STATE}/stage1/${NAME}"
 DIST="${STATE}/dist"
 TARGET_TRIPLE="${LLVM_ARCH}-linux-musl"
+case "$LLVM_ARCH" in
+    x86_64) CROSS_ARCH=aarch64 ;;
+    *) CROSS_ARCH=x86_64 ;;
+esac
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -71,7 +75,10 @@ musl_version_file="${MUSL_SRC}/VERSION"
     die "musl source tree is $(cat "$musl_version_file"), expected ${MUSL_VERSION}"
 grep -q "^#define ZLIB_VERSION \"${ZLIB_VERSION}\"" "${ZLIB_SRC}/zlib.h" 2>/dev/null ||
     die "${ZLIB_SRC} is not the zlib ${ZLIB_VERSION} source"
-mimalloc_version_define=$(printf '%d%02d%02d' $(echo "${MIMALLOC_VERSION}" | tr . ' '))
+IFS=. read -r mimalloc_major mimalloc_minor mimalloc_patch <<EOF
+${MIMALLOC_VERSION}
+EOF
+mimalloc_version_define=$(printf '%d%02d%02d' "$mimalloc_major" "$mimalloc_minor" "$mimalloc_patch")
 grep -q "^#define MI_MALLOC_VERSION ${mimalloc_version_define} " "${MIMALLOC_SRC}/include/mimalloc.h" 2>/dev/null ||
     die "${MIMALLOC_SRC} is not the mimalloc ${MIMALLOC_VERSION} source"
 
@@ -166,15 +173,71 @@ build_musl() {
     chmod 644 "${prefix}/lib/musl/libc.so"
 }
 
-# Clang reads <bin>/<name>.cfg. Select the bundled lld and compiler-rt, and search
-# the flat lib/ (libc++.a, libc++abi.a, libunwind.a) and lib/musl/ (startup
-# objects, libc.a). -B is a driver option: it makes the startup objects resolve
-# inside the package, so no GCC-built crt1.o or crti.o from the host is linked;
-# on its own the driver searches only per-target subdirectories. <CFGDIR> keeps
-# the package relocatable, and the bracketed arguments are not reported as unused
-# when only compiling. libc++abi's exception support references the unwinder, so
+# A package links its own architecture against the bundled musl, and consumers
+# also link the other architecture against a sysroot of their own (a glibc one
+# for Rust host tools, for example). The driver takes compiler-rt's builtins and
+# crtbegin/crtend from the resource directory for every target, so they are built
+# for the other architecture too. That architecture's musl headers are only a
+# build input: target headers and libc stay the consumer's.
+build_cross_runtimes() {
+    local prefix=$1 headers="${STATE}/cross-headers" musl_build="${STATE}/cross-musl-build"
+    local build="${STATE}/cross-runtimes" triple="${CROSS_ARCH}-unknown-linux-musl" name file
+    rm -rf "$headers" "$musl_build" "$build"
+    mkdir -p "$musl_build"
+    (
+        cd "$musl_build"
+        CC="${prefix}/bin/clang --target=${triple}" LIBCC=" " \
+            "${MUSL_SRC}/configure" --target="${CROSS_ARCH}" --prefix=/usr
+        make DESTDIR="$headers" install-headers
+    )
+    cmake -G Ninja -S "${SRC}/runtimes" -B "$build" -Wno-dev \
+        -DLLVM_ENABLE_RUNTIMES=compiler-rt \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_SYSTEM_NAME=Linux \
+        -DCMAKE_C_COMPILER="${prefix}/bin/clang" \
+        -DCMAKE_CXX_COMPILER="${prefix}/bin/clang++" \
+        -DCMAKE_ASM_COMPILER="${prefix}/bin/clang" \
+        -DCMAKE_C_COMPILER_TARGET="$triple" \
+        -DCMAKE_CXX_COMPILER_TARGET="$triple" \
+        -DCMAKE_ASM_COMPILER_TARGET="$triple" \
+        -DCMAKE_AR="${prefix}/bin/llvm-ar" \
+        -DCMAKE_NM="${prefix}/bin/llvm-nm" \
+        -DCMAKE_RANLIB="${prefix}/bin/llvm-ranlib" \
+        -DCMAKE_SYSROOT="$headers" \
+        -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+        -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF \
+        -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
+        -DCOMPILER_RT_BUILD_BUILTINS=ON \
+        -DCOMPILER_RT_BUILD_CRT=ON \
+        -DCOMPILER_RT_BUILD_SANITIZERS=OFF \
+        -DCOMPILER_RT_BUILD_XRAY=OFF \
+        -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
+        -DCOMPILER_RT_BUILD_PROFILE=OFF \
+        -DCOMPILER_RT_BUILD_MEMPROF=OFF \
+        -DCOMPILER_RT_BUILD_ORC=OFF \
+        -DCOMPILER_RT_BUILD_GWP_ASAN=OFF \
+        -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
+    cmake --build "$build" --target builtins crt
+    for name in "libclang_rt.builtins-${CROSS_ARCH}.a" "clang_rt.crtbegin-${CROSS_ARCH}.o" "clang_rt.crtend-${CROSS_ARCH}.o"; do
+        file=$(find "$build" -name "$name" -type f)
+        [ "$(printf '%s\n' "$file" | grep -c .)" = 1 ] || die "cross runtimes: expected one ${name}, found: ${file:-none}"
+        install -m 644 "$file" "${prefix}/${runtime_dir}/${name}"
+    done
+}
+
+# Clang reads <bin>/<mode>.cfg and then <bin>/<triple>.cfg for the normalized
+# target triple. The mode files hold the target-neutral defaults: the bundled lld
+# and compiler-rt. libc++abi's exception support references the unwinder, so
 # clang++ links the bundled libunwind; clang leaves unwinding to the caller, which
 # keeps C and foreign-runtime links (Rust brings its own unwinder) free of it.
+# The package architecture's musl file adds the flat lib/ (libc++.a, libc++abi.a,
+# libunwind.a) and lib/musl/ (startup objects, libc.a). -B is a driver option: it
+# makes the startup objects resolve inside the package, so no GCC-built crt1.o or
+# crti.o from the host is linked; on its own the driver searches only per-target
+# subdirectories. Any other target, such as the other architecture or a glibc
+# triple, gets none of these paths and links against its own --sysroot. <CFGDIR>
+# keeps the package relocatable, and the bracketed arguments are not reported as
+# unused when only compiling.
 write_driver_config() {
     local prefix=$1 cfg
     for cfg in clang:none clang++:libunwind; do
@@ -182,13 +245,15 @@ write_driver_config() {
 -fuse-ld=lld
 --rtlib=compiler-rt
 --unwindlib=${cfg#*:}
+CFG
+    done
+    cat > "${prefix}/bin/${LLVM_ARCH}-unknown-linux-musl.cfg" <<'CFG'
 --start-no-unused-arguments
 -B<CFGDIR>/../lib/musl
 -L<CFGDIR>/../lib/musl
 -L<CFGDIR>/../lib
 --end-no-unused-arguments
 CFG
-    done
 }
 
 # compiler-rt's crtbegin/crtend are the real objects: they define __dso_handle and
@@ -310,6 +375,9 @@ LC_ALL=C comm -13 "${STATE}/base.files" "${STATE}/all.files" > "${STATE}/dev.fil
 phase "musl libc ${MUSL_VERSION}"
 build_musl "$PREFIX"
 
+phase "compiler-rt for ${CROSS_ARCH}"
+build_cross_runtimes "$PREFIX"
+
 # -- package ----------------------------------------------------------------------
 phase "package"
 write_driver_config "$PREFIX"
@@ -320,6 +388,9 @@ for required in bin/clang bin/clang++ bin/ld.lld bin/llvm-ar lib/libclang.so lib
                 lib/libc++.a lib/libc++abi.a lib/libunwind.a \
                 "${runtime_dir}/libclang_rt.builtins-${LLVM_ARCH}.a" \
                 "${runtime_dir}/clang_rt.crtbegin-${LLVM_ARCH}.o" "${runtime_dir}/clang_rt.crtend-${LLVM_ARCH}.o" \
+                "${runtime_dir}/libclang_rt.builtins-${CROSS_ARCH}.a" \
+                "${runtime_dir}/clang_rt.crtbegin-${CROSS_ARCH}.o" "${runtime_dir}/clang_rt.crtend-${CROSS_ARCH}.o" \
+                "bin/${LLVM_ARCH}-unknown-linux-musl.cfg" \
                 lib/musl/libc.a lib/musl/crt1.o lib/musl/rcrt1.o lib/musl/Scrt1.o \
                 lib/musl/crti.o lib/musl/crtn.o lib/musl/libc.so \
                 bin/llvm-config include/llvm/IR/Module.h include/llvm-c/Core.h \
