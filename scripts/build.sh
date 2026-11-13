@@ -75,7 +75,10 @@ musl_version_file="${MUSL_SRC}/VERSION"
     die "musl source tree is $(cat "$musl_version_file"), expected ${MUSL_VERSION}"
 grep -q "^#define ZLIB_VERSION \"${ZLIB_VERSION}\"" "${ZLIB_SRC}/zlib.h" 2>/dev/null ||
     die "${ZLIB_SRC} is not the zlib ${ZLIB_VERSION} source"
-mimalloc_version_define=$(printf '%d%02d%02d' $(echo "${MIMALLOC_VERSION}" | tr . ' '))
+IFS=. read -r mimalloc_major mimalloc_minor mimalloc_patch <<EOF
+${MIMALLOC_VERSION}
+EOF
+mimalloc_version_define=$(printf '%d%02d%02d' "$mimalloc_major" "$mimalloc_minor" "$mimalloc_patch")
 grep -q "^#define MI_MALLOC_VERSION ${mimalloc_version_define} " "${MIMALLOC_SRC}/include/mimalloc.h" 2>/dev/null ||
     die "${MIMALLOC_SRC} is not the mimalloc ${MIMALLOC_VERSION} source"
 

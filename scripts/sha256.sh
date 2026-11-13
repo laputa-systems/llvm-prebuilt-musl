@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 if command -v sha256sum >/dev/null 2>&1; then
     sha256() { sha256sum "$@"; }
 elif command -v shasum >/dev/null 2>&1; then
