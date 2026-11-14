@@ -5,7 +5,7 @@ on:
   pull_request:
     paths:
       - .github/actions/build/**
-      - .github/workflows/build.yml
+      - .github/workflows/ci.yml
       - Makefile
       - cmake/**
       - docker/**

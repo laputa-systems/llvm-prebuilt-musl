@@ -58,7 +58,7 @@ and `.work/<arch>/logs/build.log`; `dist/release/` holds each package under both
 Only the native architecture is built locally. The `aarch64` package is built and validated natively on
 `ubuntu-26.04-arm` in CI; do not build it under emulation.
 
-A CI run (both native jobs) is slow and expensive. Dispatch `build.yml` (or `release.yml`) only after a
+A CI run (both native jobs) is slow and expensive. Dispatch `ci.yml` (or `release.yml`) only after a
 clean local x86_64 `make build` and `make verify` pass, and do not dispatch either speculatively.
 
 ## Upgrading LLVM
@@ -98,7 +98,7 @@ tests/                             Programs compiled and run by validate.sh
 patches/                           Local LLVM patch and its documentation
 docs/                              Design notes, validation checklist, bootstrap comparison
 .github/actions/build/action.yml   Shared build steps: caches, make build, make verify, artifact upload
-.github/workflows/                 build.yml (prove a branch), release.yml (publish), lint.yml
+.github/workflows/                 ci.yml (prove a branch), release.yml (publish), lint.yml
 ```
 
 ## Documentation
@@ -112,7 +112,7 @@ docs/                              Design notes, validation checklist, bootstrap
 
 ## CI
 
-- `build.yml` (dispatch only) builds and verifies both targets on any ref without publishing.
+- `ci.yml` (dispatch only) builds and verifies both targets on any ref without publishing.
 - `release.yml` (dispatch only, default branch only) runs the same steps through
   `.github/actions/build/action.yml`, then checks every asset against the commit and `sources.lock.json`
   and publishes the pre-release `release-<sha>` with `SHA256SUMS`. Assets keep the legacy
