@@ -202,7 +202,7 @@ names as the source.
 `.github/workflows/release.yml` publishes a release. Dispatch it on the default
 branch only: it builds and verifies both targets, checks `SHA256SUMS` with
 `sha256sum -c`, and creates the pre-release `release-<commit sha>`, failing if
-that tag exists. `.github/workflows/build.yml` builds and verifies both targets
+that tag exists. `.github/workflows/ci.yml` builds and verifies both targets
 on any branch without publishing. Releases made before this layout keep their
 `llvm-musl-<version>-<short sha>` tags.
 
