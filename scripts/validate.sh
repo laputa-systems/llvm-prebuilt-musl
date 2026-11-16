@@ -257,6 +257,7 @@ no_gcc "libclang_rt.builtins-${OTHER_ARCH}.a" "${TC}/lib/clang/${MAJOR}/lib/linu
 
 # -- tools start and identify themselves -------------------------------------------
 section "Tools"
+check "clang primary help footer and output streams" bash "${TESTS}/clang-help.sh" "$CLANG"
 out=$("$CLANG" --version 2>&1)
 contains "clang reports version ${LLVM_VERSION}" "$out" "clang version ${LLVM_VERSION}"
 contains "clang defaults to a musl target" "$out" "Target: ${LLVM_ARCH}-unknown-linux-musl"
