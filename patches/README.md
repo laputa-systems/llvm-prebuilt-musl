@@ -9,6 +9,7 @@ pinned in [`sources.lock.json`](../sources.lock.json) (LLVM 23.1.5).
 | Patch | Purpose | Upstream status |
 | --- | --- | --- |
 | [`0001-llvm23-dse-use-iterative-dominance-walk.patch`](0001-llvm23-dse-use-iterative-dominance-walk.patch) | Replaces the recursive dominator-tree walk in `DSEState::eliminateRedundantStoresViaDominatingConditions()` with an explicit worklist, so a deep dominator tree cannot exhaust the stack (for example on a musl worker thread, whose default stack is 128 KiB, during a ThinLTO link). Traversal order, the lifetime of each condition scope, and the `dse-max-dom-cond-depth` limit are unchanged. | Local. The tagged 23.1.5 sources still use the recursive `VisitNode` lambda. Its depth guard predates the patch; it bounds the recursion at 1024 levels but does not remove the stack use. |
+| [`0002-clang-primary-help-footer.patch`](0002-clang-primary-help-footer.patch) | Appends the distribution maintainer footer to normal Clang driver help. The option schema, hidden help, alternate driver modes, and version output stay upstream. | Distribution-specific. |
 
 ### Fixes that are upstream in 23.1.5 (no longer patched)
 
@@ -64,3 +65,9 @@ so a changed patch is never skipped because of a stale stamp.
 When adding or changing a patch, verify it against the pristine tarball for the
 pinned release, add or extend a regression under `repros/`, and describe it in
 this file.
+
+Run `bash tests/clang-footer-patch.sh <pristine Driver.cpp>` with `TMPDIR` set
+to scratch to check the footer patch forward and backward with zero fuzz.
+Run it with GNU patch as well as the host patch: GNU patch rejects unequal
+leading and trailing context at zero fuzz even when BSD patch accepts it.
+The footer patch retains two lines of context on each side.

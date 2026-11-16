@@ -35,3 +35,5 @@ is caught:
   happened and a non-LTO control.
 - The compiled-in backends (X86, AArch64, BPF), LLVM utilities, zlib debug-section compression through lld and
   `llvm-symbolizer`, archives, and a libclang C API client.
+
+The installed Clang driver help is checked by `tests/clang-help.sh` during package validation. It checks the exact footer and its absence from version, hidden help, completion, and preprocessing output.
