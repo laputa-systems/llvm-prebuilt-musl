@@ -1,7 +1,6 @@
 --- a/clang/lib/Driver/Driver.cpp
 +++ b/clang/lib/Driver/Driver.cpp
-@@ -2587,5 +2587,14 @@
-   if (C.getArgs().hasArg(options::OPT_help) ||
+@@ -2588,4 +2588,13 @@
        C.getArgs().hasArg(options::OPT__help_hidden)) {
      PrintHelp(C.getArgs().hasArg(options::OPT__help_hidden));
 +    if (!C.getArgs().hasArg(options::OPT__help_hidden) &&

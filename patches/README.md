@@ -65,3 +65,9 @@ so a changed patch is never skipped because of a stale stamp.
 When adding or changing a patch, verify it against the pristine tarball for the
 pinned release, add or extend a regression under `repros/`, and describe it in
 this file.
+
+Run `bash tests/clang-footer-patch.sh <pristine Driver.cpp>` with `TMPDIR` set
+to scratch to check the footer patch forward and backward with zero fuzz.
+Run it with GNU patch as well as the host patch: GNU patch rejects unequal
+leading and trailing context at zero fuzz even when BSD patch accepts it.
+The footer patch retains two lines of context on each side.
