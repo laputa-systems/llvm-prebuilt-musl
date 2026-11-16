@@ -2,7 +2,7 @@
 set -euo pipefail
 
 clang="${1:?usage: clang-help.sh <clang>}"
-work=$(mktemp -d "${TMPDIR:-/tmp}/clang-help.XXXXXX")
+work=$(mktemp -d "${TMPDIR:?set TMPDIR to scratch}/clang-help.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 cat >"$work/footer" <<'FOOTER'
