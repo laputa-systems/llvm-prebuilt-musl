@@ -39,6 +39,7 @@ build container; `make build` and CI both call it.
 |---------|------|
 | `make fetch` | Fetch, verify, and extract the sources pinned in `sources.lock.json` |
 | `make build` | Fetch, build the image, run `scripts/build.sh` in it, then name the release assets (`scripts/package.sh`) |
+| `make test` | Validate the already-built package through `make verify` |
 | `make verify` | Run `scripts/validate.sh` on the package in a separate, clean, network-less container, then check the release assets against it |
 | `make` | `build` and `verify` |
 | `make lint` | shellcheck over `scripts/` and a shape check of `sources.lock.json` (CI: `lint.yml`) |

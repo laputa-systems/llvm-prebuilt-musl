@@ -68,7 +68,7 @@ PACKAGE        := clang+llvm-$(LLVM_VERSION)-$(ARCH)-linux-musl
 BUILD_IMAGE    := llvm-prebuilt-musl-build:$(ARCH)
 VALIDATE_IMAGE := llvm-prebuilt-musl-validate:$(ARCH)
 
-.PHONY: all fetch build compile package verify validate-container lint build-image validate-image clean distclean
+.PHONY: all fetch build compile package test verify validate-container lint build-image validate-image clean distclean
 .DEFAULT_GOAL := all
 
 all: build verify
@@ -117,6 +117,8 @@ compile: fetch build-image
 # and under the clang+llvm-<version>-<arch>-linux-musl names that existing consumers pin.
 package:
 	sh scripts/package.sh "$(OUT_DIR)"
+
+test: verify
 
 verify: validate-container
 	sh scripts/verify-release.sh "$(OUT_DIR)"
