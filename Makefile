@@ -147,9 +147,20 @@ lint:
 # source, downloads, and ccache stay. The last line removes leftovers of the
 # previous bootstrap layout.
 clean:
-	rm -rf "$(STATE_DIR)"
+	@set -eu; \
+	  if [ "$$WORK_DIR" != "$(CURDIR)/.work" ] || [ "$$STATE_DIR" != "$(CURDIR)/.work/$${TARGET%%-*}" ] || [ "$$OUT_DIR" != "$(CURDIR)/dist/release" ]; then \
+	    printf '%s\n' 'make clean: use the checkout-local work, state, and release directories' >&2; exit 1; \
+	  fi; \
+	  case "$(PACKAGE)" in *[!A-Za-z0-9+._-]*|'') printf '%s\n' 'make clean: invalid package filename' >&2; exit 1;; esac; \
+	  for directory in ./.work "$$STATE_DIR" ./dist "$$OUT_DIR" ./llvm-build ./llvm-host ./llvm-install; do \
+	    if [ -L "$$directory" ] || { [ -e "$$directory" ] && [ ! -d "$$directory" ]; }; then \
+	      printf '%s\n' "make clean: $$directory must be a local build directory" >&2; exit 1; \
+	    fi; \
+	  done
+	rm -rf -- "$$STATE_DIR"
 	rm -f "$(OUT_DIR)"/llvm-*-$(TARGET).* "$(OUT_DIR)/$(PACKAGE).tar.xz" "$(OUT_DIR)/$(PACKAGE)-dev.tar.xz"
-	rm -rf llvm-build llvm-host llvm-install build-*.log
+	rm -rf -- ./llvm-build ./llvm-host ./llvm-install
+	rm -f -- ./build-*.log
 
 distclean: clean
 	rm -rf "$(WORK_DIR)/x86_64" "$(WORK_DIR)/aarch64" "$(WORK_DIR)/download" "$(WORK_DIR)/ccache" "$(CURDIR)/dist"

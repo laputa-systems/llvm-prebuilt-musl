@@ -43,7 +43,7 @@ build container; `make build` and CI both call it.
 | `make verify` | Run `scripts/validate.sh` on the package in a separate, clean, network-less container, then check the release assets against it |
 | `make` | `build` and `verify` |
 | `make lint` | shellcheck over `scripts/` and a shape check of `sources.lock.json` (CI: `lint.yml`) |
-| `make clean` / `make distclean` | Remove this target's state / all generated state (never a user-supplied `LLVM_DIR`) |
+| `make clean` / `make distclean` | Remove this target’s state / all generated state in the default checkout-local directories. Both refuse external and symlinked work and release paths. |
 
 The host needs Docker, GNU make, `curl`, `tar`, `xz`, `jaq` (`scripts/install-jaq.sh`), and `sha256sum` (or
 `shasum`); `make lint` also needs shellcheck. `TARGET=x86_64-unknown-linux-musl|aarch64-unknown-linux-musl`
