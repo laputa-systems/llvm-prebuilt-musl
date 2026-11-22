@@ -182,6 +182,7 @@ hours; a ccache directory under `.work/` makes later ones faster.
 |---------|------|
 | `make fetch` | Download, verify, and extract the sources pinned in [`sources.lock.json`](sources.lock.json) |
 | `make build` | Fetch, build and package in a container, and name the release assets in `dist/release` |
+| `make test` | Check release packaging and validation using local fixture files |
 | `make verify` | Test the packages in a clean, network-less container and check the release assets against them |
 | `make lint` | Run shellcheck over the scripts and check the lock file |
 | `make clean` | Remove this target's build tree and packages |

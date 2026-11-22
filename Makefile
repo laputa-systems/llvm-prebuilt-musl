@@ -118,7 +118,8 @@ compile: fetch build-image
 package:
 	sh scripts/package.sh "$(OUT_DIR)"
 
-test: verify
+test:
+	sh tests/release-assets.sh
 
 verify: validate-container
 	sh scripts/verify-release.sh "$(OUT_DIR)"
