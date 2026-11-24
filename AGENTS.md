@@ -7,6 +7,8 @@ The tools and shared libraries depend dynamically on musl only. The package also
 musl libc (libc.a and startup objects) built by the shipped clang, so consumers need no GCC-built
 libc.
 
+The roadmap, [docs/roadmap.md](docs/roadmap.md), holds all current and future work; its Status is the resume point.
+
 ## Build graph
 
 ```
