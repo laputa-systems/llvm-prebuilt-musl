@@ -15,7 +15,7 @@ RUN apk add --no-cache \
     ninja-build=1.13.2-r1 \
     ninja-is-really-ninja=1.13.2-r1 \
     patch=2.8.1-r0 \
-    python3=3.14.10-r1 \
+    python3=3.14.10-r2 \
     tar=1.35-r5 \
     xz=5.8.4-r0 \
     zlib-dev=1.4-r0 \
