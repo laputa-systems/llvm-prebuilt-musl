@@ -531,7 +531,7 @@ else fail "-gz=zlib compile and link"; printf '%s\n' "$out" | indent; fi
 contains "llvm-strings finds text in the executable" "$("${TC}/bin/llvm-strings" "${u}/hello")" "hello from C"
 contains "llvm-size reports sections" "$("${TC}/bin/llvm-size" "${u}/hello")" "text"
 check "llvm-strip strips an executable" "${TC}/bin/llvm-strip" --strip-all "${u}/hello" -o "${u}/hello.stripped"
-verdict "stripped executable is smaller" test "$(stat -c %s "${u}/hello.stripped")" -lt "$(stat -c %s "${u}/hello")"
+verdict "stripped executable is smaller" test "$(wc -c < "${u}/hello.stripped" | tr -d ' ')" -lt "$(wc -c < "${u}/hello" | tr -d ' ')"
 if out=$("${u}/hello.stripped" 2>&1); then pass "stripped executable still runs"; else fail "stripped executable failed"; printf '%s\n' "$out" | indent; fi
 
 # archives: create, index, and link against one
