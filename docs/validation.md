@@ -18,6 +18,10 @@ is caught:
 - GCC-free provenance: `llvm-readelf -p .comment` over `libc.a`, its crt objects, `libunwind.a`, and
   the compiler-rt builtins contains no `GCC:` string; a linked static program's `.comment` must not
   either.
+- Linked runtimes (`scripts/check-runtimes.sh`, also run by `build.sh`): libc++, libc++abi,
+  libc++experimental, libunwind, `lib/musl/`, and compiler-rt's builtins and crt objects for both
+  architectures contain no path under the build container's `/work`, and no `clang_rt.crtbegin-<arch>.o`
+  references `__register_frame_info` or `__deregister_frame_info`.
 - Driver defaults (`-###`): libc++, compiler-rt builtins and startup files, `-lunwind` for `clang++`
   and none for `clang`, the package's musl startup objects and
   `libc.a`, the package's `ld.lld`, no libstdc++/libgcc/GCC paths.

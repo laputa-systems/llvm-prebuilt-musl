@@ -70,10 +70,18 @@ set(COMPILER_RT_BUILD_MEMPROF OFF CACHE BOOL "")
 set(COMPILER_RT_BUILD_ORC OFF CACHE BOOL "")
 set(COMPILER_RT_BUILD_GWP_ASAN OFF CACHE BOOL "")
 set(COMPILER_RT_BUILD_CTX_PROFILE OFF CACHE BOOL "")
+# crtbegin's weak frame-registration references become imports of every
+# dynamically linked program; unwinders find frames through .eh_frame_hdr.
+set(COMPILER_RT_CRT_USE_EH_FRAME_REGISTRY OFF CACHE BOOL "")
+
+# Keep the source root out of the runtimes consumers link (__FILE__, debug info).
+get_filename_component(runtimes_source_root "${CMAKE_SOURCE_DIR}" DIRECTORY)
+set(runtimes_prefix_map "-ffile-prefix-map=${runtimes_source_root}=.")
+set(BUILTINS_CMAKE_ARGS "-DCMAKE_C_FLAGS=${runtimes_prefix_map}" CACHE STRING "")
 
 # libc++, libc++abi, libunwind: static archives only, musl flavor.
 # Stage 2 links these static runtimes into libclang.so and libLTO.so.
-set(RUNTIMES_CMAKE_ARGS "-DCMAKE_POSITION_INDEPENDENT_CODE=ON" CACHE STRING "")
+set(RUNTIMES_CMAKE_ARGS "-DCMAKE_POSITION_INDEPENDENT_CODE=ON;-DCMAKE_C_FLAGS=${runtimes_prefix_map};-DCMAKE_CXX_FLAGS=${runtimes_prefix_map}" CACHE STRING "")
 set(LIBCXX_HAS_MUSL_LIBC ON CACHE BOOL "")
 set(LIBCXX_ENABLE_SHARED OFF CACHE BOOL "")
 set(LIBCXX_ENABLE_STATIC ON CACHE BOOL "")

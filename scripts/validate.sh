@@ -17,6 +17,7 @@ set -uo pipefail
 TARBALL="${1:?usage: validate.sh <package.tar.xz> <package-dev.tar.xz>}"
 DEV_TARBALL="${2:?usage: validate.sh <package.tar.xz> <package-dev.tar.xz>}"
 PURITY="${PURITY_SCRIPT:-/check-purity.sh}"
+RUNTIMES_CHECK="${RUNTIMES_SCRIPT:-/check-runtimes.sh}"
 : "${LLVM_VERSION:?}" "${MUSL_VERSION:?}" "${LLVM_ARCH:?}"
 TESTS="${TESTS_DIR:-/tests}"
 MAJOR="${LLVM_VERSION%%.*}"
@@ -254,6 +255,7 @@ done
 no_gcc lib/libunwind.a "${TC}/lib/libunwind.a"
 no_gcc "libclang_rt.builtins-${LLVM_ARCH}.a" "${TC}/lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${LLVM_ARCH}.a"
 no_gcc "libclang_rt.builtins-${OTHER_ARCH}.a" "${TC}/lib/clang/${MAJOR}/lib/linux/libclang_rt.builtins-${OTHER_ARCH}.a"
+check "no runtime records a build path, no crtbegin references frame registration" sh "$RUNTIMES_CHECK" "$TC"
 
 # -- tools start and identify themselves -------------------------------------------
 section "Tools"
