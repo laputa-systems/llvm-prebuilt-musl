@@ -205,10 +205,12 @@ build_cross_runtimes() {
         -DCMAKE_RANLIB="${prefix}/bin/llvm-ranlib" \
         -DCMAKE_SYSROOT="$headers" \
         -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+        -DCMAKE_C_FLAGS="-ffile-prefix-map=${SRC}=." \
         -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF \
         -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
         -DCOMPILER_RT_BUILD_BUILTINS=ON \
         -DCOMPILER_RT_BUILD_CRT=ON \
+        -DCOMPILER_RT_CRT_USE_EH_FRAME_REGISTRY=OFF \
         -DCOMPILER_RT_BUILD_SANITIZERS=OFF \
         -DCOMPILER_RT_BUILD_XRAY=OFF \
         -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
@@ -399,6 +401,7 @@ for required in bin/clang bin/clang++ bin/ld.lld bin/llvm-ar lib/libclang.so lib
 done
 "${PREFIX}/bin/clang" --version
 "${REPO}/scripts/check-purity.sh" "${PREFIX}" "${LLVM_ARCH}"
+"${REPO}/scripts/check-runtimes.sh" "${PREFIX}"
 
 (cd "$PREFIX" && find . -mindepth 1 | LC_ALL=C sort) > "${STATE}/package.files"
 LC_ALL=C comm -23 "${STATE}/package.files" "${STATE}/dev.files" > "${DIST}/${NAME}.manifest"

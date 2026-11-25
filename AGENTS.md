@@ -29,7 +29,7 @@ clang, against libc++/libunwind/compiler-rt and the clang-built musl and zlib
 install-distribution + development components -> rebuild musl with the shipped clang
           |
           v
-check-purity -> package (compiler tar.xz, -dev tar.xz) -> validate in a clean container
+check-purity, check-runtimes -> package (compiler tar.xz, -dev tar.xz) -> validate in a clean container
 ```
 
 One CMake configuration file, two build trees: stage 1 (`build`) and stage 2 (`build2`). Nothing shipped may contain GNU runtime code; `scripts/check-purity.sh` enforces it. `scripts/build.sh` runs the phases inside a single
@@ -96,6 +96,7 @@ scripts/package.sh                 Publish the packages as llvm[-dev]-<version>-
 scripts/verify-release.sh          Check dist/release against the validated packages and the lock
 scripts/run-optimizer-regressions.sh  Runs repros/*.ll RUN lines with the new opt and FileCheck
 scripts/validate.sh                Installed-package validation (runs in the clean container)
+scripts/check-runtimes.sh          No build path in the linked runtimes, no frame registration in crtbegin (build.sh, validate.sh)
 repros/                            Optimizer regression inputs and the DSE IR generator
 tests/                             Programs compiled and run by validate.sh
 patches/                           Local LLVM patch and its documentation

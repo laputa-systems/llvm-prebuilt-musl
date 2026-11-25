@@ -133,6 +133,7 @@ validate-container: validate-image
 		-v "$(CURDIR)/tests:/tests:ro" \
 		-v "$(CURDIR)/scripts/validate.sh:/validate.sh:ro" \
 		-v "$(CURDIR)/scripts/check-purity.sh:/check-purity.sh:ro" \
+		-v "$(CURDIR)/scripts/check-runtimes.sh:/check-runtimes.sh:ro" \
 		-e LLVM_VERSION=$(LLVM_VERSION) \
 		-e MUSL_VERSION=$(MUSL_VERSION) \
 		-e LLVM_ARCH=$(ARCH) \

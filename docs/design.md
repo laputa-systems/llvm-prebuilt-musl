@@ -46,7 +46,10 @@ How the build produces the package and why. [AGENTS.md](../AGENTS.md) holds the 
   `-lunwind`; a default `clang` link must not, so C and Rust links keep their own unwinding choice.
   compiler-rt's `crtbegin`/`crtend` are installed with the builtins and are the real objects (an empty
   stub would lose `__dso_handle` and break C++ static destructors, which `tests/cxx/features.cpp`
-  checks). The GCC names (`crtbegin{,S,T}.o`, `crtend{,S}.o`) and the non-arch names
+  checks). They are built with `COMPILER_RT_CRT_USE_EH_FRAME_REGISTRY=OFF`, so linked programs do not
+  import `__register_frame_info`/`__deregister_frame_info`; unwinders find frames through the
+  `.eh_frame_hdr` that the driver always requests. All runtimes are compiled with
+  `-ffile-prefix-map=<source root>=.`, so their `__FILE__` strings carry no build path. The GCC names (`crtbegin{,S,T}.o`, `crtend{,S}.o`) and the non-arch names
   (`clang_rt.crt{begin,end}.o`) are symlinks to those objects in the resource dir, so a driver that
   falls back to `GetFilePath` still needs no GCC crt files. `libc++.a` includes the libc++abi objects
   (`LIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY`) so the driver's default `-lc++` is a complete link.
