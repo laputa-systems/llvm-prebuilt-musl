@@ -60,13 +60,13 @@ on_exit() {
 }
 trap on_exit EXIT
 
-echo "LLVM ${LLVM_VERSION} for ${TARGET_TRIPLE}: $(date -u +%FT%TZ), $(nproc) cores"
+echo "LLVM ${LLVM_VERSION} for ${TARGET_TRIPLE}: $(date -u +%FT%TZ), $(getconf _NPROCESSORS_ONLN) cores"
 
 # The source must be the pinned release, whether fetched by `make source` or
 # supplied through LLVM_DIR.
 version_file="${SRC}/cmake/Modules/LLVMVersion.cmake"
 [ -f "$version_file" ] || die "${SRC} is not an llvm-project checkout"
-src_version=$(sed -n 's/^ *set(LLVM_VERSION_\(MAJOR\|MINOR\|PATCH\) \([0-9]*\))/\2/p' "$version_file" | paste -sd. -)
+src_version=$(sed -nE 's/^ *set\(LLVM_VERSION_(MAJOR|MINOR|PATCH)[[:space:]]+([0-9]*)\)/\2/p' "$version_file" | paste -sd. -)
 [ "$src_version" = "${LLVM_VERSION}" ] ||
     die "source tree is LLVM ${src_version}, expected ${LLVM_VERSION}"
 musl_version_file="${MUSL_SRC}/VERSION"
@@ -157,7 +157,7 @@ build_musl() {
         RANLIB="${prefix}/bin/llvm-ranlib" \
         LIBCC="${prefix}/${runtime_dir}/libclang_rt.builtins-${LLVM_ARCH}.a" \
             "${MUSL_SRC}/configure" --disable-shared --target="${LLVM_ARCH}"
-        make -j"$(nproc)"
+        make -j"$(getconf _NPROCESSORS_ONLN)"
     )
     mkdir -p "${prefix}/lib/musl"
     install -m 644 "${build}/lib/libc.a" "${prefix}/lib/musl/libc.a"
@@ -288,7 +288,7 @@ cp -a "$ZLIB_SRC" "${STATE}/zlib-build"
     cd "${STATE}/zlib-build"
     CC="${STAGE1}/bin/clang" AR="${STAGE1}/bin/llvm-ar" RANLIB="${STAGE1}/bin/llvm-ranlib" \
     CFLAGS="-O2 -fPIC" ./configure --static --prefix="$ZLIB_PREFIX"
-    make -j"$(nproc)" libz.a
+    make -j"$(getconf _NPROCESSORS_ONLN)" libz.a
     make install
 )
 [ -f "${ZLIB_PREFIX}/lib/libz.a" ] || die "zlib did not install"

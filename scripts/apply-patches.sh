@@ -15,9 +15,7 @@ patch_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../patches" && pwd)"
 stamp="${src}/.llvm-prebuilt-musl-patches"
 
 sha256_of() {
-    if command -v sha256sum >/dev/null; then sha256sum <"$1" | cut -d' ' -f1
-    else shasum -a 256 <"$1" | cut -d' ' -f1
-    fi
+    sha256sum <"$1" | cut -d' ' -f1
 }
 
 shopt -s nullglob
